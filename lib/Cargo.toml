@@ -1,0 +1,14 @@
+[package]
+name = "lib"
+version = "0.0.1"
+authors = [""]
+description = "Main"
+edition = "2018"
+
+[dependencies]
+utils = { path = "../utils" }
+tracing = "0.1.37"
+
+[dependencies.clap]
+version = "4.3.0"
+features = ["cargo", "derive"]
