@@ -1,8 +1,7 @@
 use lib::*;
 
-use std::{error::Error, path::PathBuf};
-
 use clap::{Parser, Subcommand};
+use std::{error::Error, path::PathBuf};
 
 #[derive(Parser)]
 struct Cli {
@@ -20,9 +19,14 @@ enum Command {
     /// URL of verifier
     #[arg(long)]
     url: String,
+    #[arg(short, long, default_value_t = 4545)]
+    port: u16,
   },
   /// ZKML verifier
-  Server {},
+  Server {
+    #[arg(short, long, default_value_t = 4545)]
+    port: u16,
+  },
 }
 
 #[tokio::main]
@@ -30,13 +34,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
   let args = Cli::parse();
 
   match args.command {
-    Command::Client { input_file, url } => {
-      let app = subcommands::Client::new(input_file, url);
-      app.run();
+    Command::Client {
+      input_file,
+      url,
+      port,
+    } => {
+      let true_url = format!("https://{}:{}/", url, port);
+      let app = subcommands::Client::new(input_file, true_url);
+      app.run().await;
     }
-    Command::Server {} => {
-      let app = subcommands::Server::new();
-      app.run();
+    Command::Server { port } => {
+      let app = subcommands::Server::new(port);
+      app.run().await;
     }
   }
   Ok(())
