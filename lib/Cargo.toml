@@ -6,9 +6,5 @@ description = "Main"
 edition = "2018"
 
 [dependencies]
-utils = { path = "../utils" }
-tracing = "0.1.37"
-
-[dependencies.clap]
-version = "4.3.0"
-features = ["cargo", "derive"]
+axum = "0.7.5"
+reqwest = "0.12.5"
