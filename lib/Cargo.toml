@@ -6,9 +6,9 @@ description = "Main"
 edition = "2018"
 
 [dependencies]
-utils = { path = "../utils" }
-tracing = "0.1.37"
-
-[dependencies.clap]
-version = "4.3.0"
-features = ["cargo", "derive"]
+axum = "0.7.5"
+reqwest = "0.12.5"
+serde = "1.0.203"
+serde_json = "1.0.117"
+tokio = "1.38.0"
+tracing-subscriber = "0.3.18"
