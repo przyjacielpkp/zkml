@@ -1,7 +1,4 @@
-use std::{
-  fs,
-  path::{Path, PathBuf},
-};
+use std::{fs, path::PathBuf};
 
 pub struct Client {
   input: String,
@@ -23,10 +20,9 @@ impl Client {
   pub async fn run(self) {
     let client = reqwest::Client::new();
 
-    let proof = "";
-    /*
-     *let proof = generate_proof(self.input);
-     */
+    todo!("Proving not implemented");
+    let proof = self.input;
+
     let response = match client.get(self.url).body(proof).send().await {
       Ok(response) => response,
       Err(err) => panic!("{}", err),

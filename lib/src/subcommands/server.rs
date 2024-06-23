@@ -21,11 +21,8 @@ impl Server {
   }
 
   async fn handle_request(input: String) -> String {
-    let verified = true;
-    /*
-     *let proof = parse(input);
-     *let verified = verify(proof);
-     */
+    todo!("Verification not implemented");
+    let verified = input.is_empty();
     serde_json::to_string(&verified).unwrap()
   }
 }
