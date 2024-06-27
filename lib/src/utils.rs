@@ -1,12 +1,12 @@
 
 #[cfg(not(debug_assertions))]
 use human_panic::setup_panic;
-use tracing::subscriber::SetGlobalDefaultError;
+use tracing::subscriber::{self, SetGlobalDefaultError};
 
 #[cfg(debug_assertions)]
 extern crate better_panic;
 
-use tracing_subscriber;
+use tracing_subscriber::{self, fmt, layer::SubscriberExt};
 
 // [NOTE] tracing
 // 
@@ -22,7 +22,21 @@ use tracing_subscriber;
 // pub fn myfn\
 
 pub fn install_logger() -> Result<(), SetGlobalDefaultError> {
-    let subscriber = tracing_subscriber::fmt().finish();
+  // let subscriber = tracing_subscriber::registry()
+  //   .with(fmt::layer())
+  //   .with(tracing_subscriber::filter::EnvFilter::from_default_env())
+  //   .init();
+    let subscriber = tracing_subscriber::fmt()
+      .compact()
+      ;
+      // .with
+      // .with(EnvFilter::from_default_env());
+    // let s = tracing_subscriber::registry().with(fmt::layer());
+
+    // #[cfg(debug_assertions)]
+    // let subscriber = subscriber.with_max_level(tracing::Level::DEBUG);
+
+    let subscriber = subscriber.finish();
     return tracing::subscriber::set_global_default(subscriber);
 }
 

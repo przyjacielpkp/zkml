@@ -1,5 +1,7 @@
+#![feature(ascii_char)]
+
 pub mod subcommands;
 
-pub mod types;
-// pub mod scalar;
+pub mod notes;
+pub mod scalar;
 pub mod utils;

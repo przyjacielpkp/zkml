@@ -31,7 +31,7 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-  utils::init_logging();
+  utils::init_logging()?;
   let args = Cli::parse();
 
   match args.command {
