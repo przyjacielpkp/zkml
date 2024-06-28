@@ -14,42 +14,19 @@ use luminal::{
     shape::Shape
 };
 
-
 /// 
 /// Rewrite the ml source graph to scalarised version, where tensor operations are replaced with a multiplicity of scalar operations.
 ///  
 
 /// Note: tensors may have dynamic dimensions.
-/// Solution 1: break on these
+/// Solution 1: assume not
 
 
 // Asserts (in non-strictly-typed way) that all input tensors are single values.
-pub struct ScalarGraph{ pub graph : Graph }
+// pub struct ScalarGraph{ pub graph : Graph }
 
 
-// Step1: after every node insert an aux node (at every out-edge). Make the node output vector of singleton tensors instead of single tensor of some length.
-//       The step is unnessecary, its a mental simplification and helpful in debugging. 
-// 
 // Problem: What about nodes that output multiple values? Add, Mul, LessThan, ReduceAdd - are not like that right?
-
-// Step2: Look at Operator taking as inputs aux nodes from step1 and rewrite it to a multitude of scalar ops.
-// 
-
-#[derive(Debug, Default)]
-pub struct Aux {}
-
-impl Operator for Aux {
-  fn process(&mut self, _tensors: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
-    // semantically:
-    // 
-    // vec![tensors.into_iter().map(|(tensor, shape)| {
-    //   assert!(shape.n_elements().to_usize().unwrap() == 1);
-    //   tensor.only_element()
-    // }).collect()];
-
-    vec![]
-  }
-}
 
 #[derive(Debug, Default)]
 pub struct UniformOutShapes;
@@ -77,51 +54,14 @@ impl Compiler for UniformOutShapes {
 }
 
 pub type ScalarCompiler = (
-    // Step1,
     UniformOutShapes,
-    Step2
+    Scalarize
 );
 
 #[derive(Debug, Default)]
-pub struct Step1;
+pub struct Scalarize;
 
-/// OBSOLETE
-impl Compiler for Step1 {
-  type Output = ();
-  #[instrument(level = "debug", skip(_ids))]
-  fn compile<T: ToIdsMut>(&self, graph: &mut Graph, mut _ids: T) {
-    // Add Aux node at every outgoing edge in graph:
-    //  - split nodes connected by edge
-    //  - connect source to Aux with shape-many edges
-    //  - connect Aux to target with 1 edge keeping original shape
-    let xs = ((&graph.graph).node_indices().collect::<Vec<_>>()).clone();
-    xs.into_iter().for_each(move |node| {
-      let out_edges = graph.graph.edges_directed(node, Outgoing).map(|e| (e.weight().clone(), e.source(), e.target())).collect::<Vec<_>>();
-      for (w, src, trg) in out_edges {
-        if let Some((in_order, out_order, shape)) = w.as_data() {
-          let n = shape.n_elements().to_usize().unwrap();
-          let mut aux = graph.add_op(Aux{});
-          for _ in 0..n {
-            aux = aux.input(src, out_order,R0::to_tracker());
-          }
-          let aux_i = aux.finish();
-          graph.add_edge(aux_i, trg, Dependency::Data { input_order: in_order, output_order: 0, shape: shape });
-          let rem_edges = graph.edges_connecting(src, trg).map(|e| e.id()).collect::<Vec<_>>();
-          rem_edges.into_iter().for_each(|e| {
-            graph.remove_edge(e);
-          });
-        } else {
-          continue;
-        }
-      }
-    });
-  }
-}
-
-#[derive(Debug, Default)]
-pub struct Step2;
-
-impl Compiler for Step2 {
+impl Compiler for Scalarize {
     type Output = ();
     #[instrument(level = "debug", name = "compile", skip(_ids))]
     /// Start from the sinks in graph and go backwards.
@@ -457,19 +397,4 @@ fn logical_to_physical(
   } else {
     None
   }
-}
-
-pub(crate) fn constant(num: f32) -> SelectGraph {
-  let mut n = op::<Constant>();
-  n.check(move |o, _| {
-      if let Some(c) = o.as_any().downcast_ref::<Constant>() {
-          match c.0 {
-              ConstantValue::Float(f) => f == num,
-              _ => false,
-          }
-      } else {
-          false
-      }
-  });
-  n
 }
