@@ -1,6 +1,13 @@
-use luminal::graph::Graph;
+/// 
+/// Rewrite the ml source graph to scalarised version, where tensor operations are replaced with a multiplicity of scalar operations.
+///  
 
-// mod binary;
+/// Note: tensors may have dynamic dimensions.
+/// Solution 1: assume not
+
+// Problem: What about nodes that output multiple values? Add, Mul, LessThan, ReduceAdd - are not like that right?
+
+use luminal::graph::Graph;
 
 use std::{collections::HashMap, error::Error, fs::File, io::Write};
 
@@ -14,19 +21,19 @@ use luminal::{
     shape::Shape
 };
 
-/// 
-/// Rewrite the ml source graph to scalarised version, where tensor operations are replaced with a multiplicity of scalar operations.
-///  
+/// Asserts (in non-strictly-typed way) that all input tensors are single values.
+#[derive(Debug)]
+pub struct ScalarGraph{ pub graph : Graph }
 
-/// Note: tensors may have dynamic dimensions.
-/// Solution 1: assume not
-
-
-// Asserts (in non-strictly-typed way) that all input tensors are single values.
-// pub struct ScalarGraph{ pub graph : Graph }
-
-
-// Problem: What about nodes that output multiple values? Add, Mul, LessThan, ReduceAdd - are not like that right?
+/// Rewrite the static tensor computation to scalar computation.
+pub fn scalar( mut cx : Graph ) -> ScalarGraph {
+  // TODO: unfortunetely original cx is destroyed in the process
+  // let mut cx1 = (&cx).clone().clone();
+  // we dont care about remap for now
+  let mut remap: Vec<NodeIndex> = vec![];
+  let ((), ()) = cx.compile(ScalarCompiler::default(), &mut remap);
+  ScalarGraph{ graph: cx }
+}
 
 #[derive(Debug, Default)]
 pub struct UniformOutShapes;
@@ -63,6 +70,9 @@ pub struct Scalarize;
 
 impl Compiler for Scalarize {
     type Output = ();
+
+    // THIS-WORKS 
+
     #[instrument(level = "debug", name = "compile", skip(_ids))]
     /// Start from the sinks in graph and go backwards.
     /// Look at a node - assume all its outgoing shapes are the same (due to UniformOutShapes).
@@ -122,9 +132,9 @@ impl Compiler for Scalarize {
         pi.reverse();
         pi
       };
-      // error!("first node in reverse toposorted graph: {:?}", pi[0]);
       info!("first node in reverse toposorted graph: {:?}", pi[0]);
-      // debug!("first node in reverse toposorted graph: {:?}", pi[0]); // todo: doenst work
+
+      // TODO: this demands the obvious refactor
 
       for x in pi {
         info!("x={:?} in g={:?}", x, graph.graph);
@@ -231,7 +241,7 @@ impl Compiler for Scalarize {
               assert!(output_order == 0, "Assuming sigle valued Op's");
               // assuming static shape
               let k = shape.n_elements().to_usize().unwrap();
-              assert!( k == n, "In Add expected physical shape to same as incoming logical shape." ); // Op specific
+              assert!( k == n, "In Add expected physical shape to be the same as incoming logical shape. n = {}, k = {}, src = {:?}", n, k, source ); // Op specific
               for j in 0..k {
                 let (from, to) = (j as u8, j); // Op specific
                 info!("n={:?}, k={:?}, j={:?}, b={:?}", n, k, j, b);
@@ -241,7 +251,7 @@ impl Compiler for Scalarize {
                   Dependency::Data{
                     input_order: b as u8,
                     output_order : from, // saving the logical index that we used that edge for
-                    shape: R0::to_tracker(),
+                    shape, // saving the original shape. TODO: save once, not in every little edge 
                   });
               }
             }
@@ -300,7 +310,7 @@ pub fn pretty_print_g(graph: &Graph) -> Result<(), Box<dyn Error>> {
 mod tests {
     use std::error::Error;
 
-    use luminal::{graph::Graph, shape::R1};
+    use luminal::{graph::Graph, shape::{Const, R1, R2}};
     use tracing::info;
 
     use crate::{scalar::{pretty_print_g, save_graphviz}, utils};
@@ -319,12 +329,52 @@ mod tests {
       .set(vec![3.0, 3.0]);
     let mut c = ((a + b) + d).retrieve();
     print!("{:?}", cx);
+    save_graphviz("test_run_tensor.dot".to_string(), &cx)?;
     let r = cx.compile(ScalarCompiler::default(), &mut c);
     print!("{:?}", cx);
     print!("{:?}", r);
     // pretty_print_g(&cx)?;
-    save_graphviz("test_run.dot".to_string(), &cx)?;
+    save_graphviz("test_run_scalar.dot".to_string(), &cx)?;
     cx.display();
+    info!("compiled : {:?}", cx.graph);
+
+    // THIS-WORKS
+    // Open to see original graph  of (a+b)+d:
+    // https://dreampuf.github.io/GraphvizOnline/#digraph%20%7B%0A%20%20%20%200%20%5B%20label%20%3D%20%22Tensor%20Load%22%20%5D%0A%20%20%20%201%20%5B%20label%20%3D%20%22Tensor%20Load%22%20%5D%0A%20%20%20%202%20%5B%20label%20%3D%20%22Tensor%20Load%22%20%5D%0A%20%20%20%203%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%204%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%200%20-%3E%203%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B2%5D%2C%20indexes%3A%20%5B0%5D%2C%20fake%3A%20%5Bf%0Aalse%5D%2C%20mask%3A%20%5B(0%2C%202147483647)%5D%2C%20padding%3A%20%5B(0%2C%200)%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%201%20-%3E%203%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B2%5D%2C%20indexes%3A%20%5B0%5D%2C%20fake%3A%20%5Bf%0Aalse%5D%2C%20mask%3A%20%5B(0%2C%202147483647)%5D%2C%20padding%3A%20%5B(0%2C%200)%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%203%20-%3E%204%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B2%5D%2C%20indexes%3A%20%5B0%5D%2C%20fake%3A%20%5Bf%0Aalse%5D%2C%20mask%3A%20%5B(0%2C%202147483647)%5D%2C%20padding%3A%20%5B(0%2C%200)%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%202%20-%3E%204%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B2%5D%2C%20indexes%3A%20%5B0%5D%2C%20fake%3A%20%5Bf%0Aalse%5D%2C%20mask%3A%20%5B(0%2C%202147483647)%5D%2C%20padding%3A%20%5B(0%2C%200)%5D%20%7D%20%7D%22%20%5D%0A%7D%0A
+    // Open for scalar graph (see its basically double the original in this case): 
+    // https://dreampuf.github.io/GraphvizOnline/#digraph%20%7B%0A%20%20%20%200%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%201%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%203%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%204%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%205%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%206%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%207%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%208%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%209%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2010%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%208%20-%3E%207%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%203%20-%3E%204%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%207%20-%3E%206%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%204%20-%3E%205%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%209%20-%3E%207%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%200%20-%3E%204%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2010%20-%3E%206%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%201%20-%3E%205%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%7D%0A%0A
+
+    Ok(())
+  }
+
+  #[test]
+  fn test_run_2() -> Result<(), Box<dyn Error>> {
+    utils::init_logging()?;
+    let mut cx = Graph::new();
+    let a = cx.tensor::<R1<2>>()
+      .set(vec![4.0, 4.0]);
+    let b = cx.tensor::<R1<2>>()
+      .set(vec![8.0, 8.0]);
+    let d = cx.tensor::<R2<2, 3>>()
+      .set(vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0]);
+    let mut c = ((a + b).expand::<(_, Const<3>), _>() + d).retrieve();
+    print!("{:?}", cx);
+    save_graphviz("test_run2_tensor.dot".to_string(), &cx)?;
+    let r = cx.compile(ScalarCompiler::default(), &mut c);
+    print!("{:?}", cx);
+    print!("{:?}", r);
+    // pretty_print_g(&cx)?;
+    save_graphviz("test_run2_scalar.dot".to_string(), &cx)?;
+    cx.display();
+    info!("compiled : {:?}", cx.graph);
+
+    // THIS-WORKS
+    // Open to see original graph of (a+b).expand()+d:
+    // https://dreampuf.github.io/GraphvizOnline/#digraph%20%7B%0A%20%20%20%200%20%5B%20label%20%3D%20%22Tensor%20Load%22%20%5D%0A%20%20%20%201%20%5B%20label%20%3D%20%22Tensor%20Load%22%20%5D%0A%20%20%20%202%20%5B%20label%20%3D%20%22Tensor%20Load%22%20%5D%0A%20%20%20%203%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%204%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%200%20-%3E%203%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B2%5D%2C%20indexes%3A%20%5B0%5D%2C%20fake%3A%20%5Bf%0Aalse%5D%2C%20mask%3A%20%5B(0%2C%202147483647)%5D%2C%20padding%3A%20%5B(0%2C%200)%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%201%20-%3E%203%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B2%5D%2C%20indexes%3A%20%5B0%5D%2C%20fake%3A%20%5Bf%0Aalse%5D%2C%20mask%3A%20%5B(0%2C%202147483647)%5D%2C%20padding%3A%20%5B(0%2C%200)%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%203%20-%3E%204%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B2%2C%203%5D%2C%20indexes%3A%20%5B0%2C%201%5D%2C%20fa%0Ake%3A%20%5Bfalse%2C%20true%5D%2C%20mask%3A%20%5B(0%2C%202147483647)%2C%20(0%2C%202147483647)%5D%2C%20padding%3A%20%5B(0%2C%200)%2C%20(0%2C%200)%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%202%20-%3E%204%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B2%2C%203%5D%2C%20indexes%3A%20%5B0%2C%201%5D%2C%20fa%0Ake%3A%20%5Bfalse%2C%20false%5D%2C%20mask%3A%20%5B(0%2C%202147483647)%2C%20(0%2C%202147483647)%5D%2C%20padding%3A%20%5B(0%2C%200)%2C%20(0%2C%200)%5D%20%7D%20%7D%22%20%5D%0A%7D%0A
+    // Notice how it's the same graph as in test_run, but different shape at an edge
+    // Open for scalar graph:
+    // https://dreampuf.github.io/GraphvizOnline/#digraph%20%7B%0A%20%20%20%200%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%201%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%203%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%204%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%205%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%206%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%207%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%208%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%209%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2010%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2011%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2012%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2013%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2014%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2015%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2016%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2017%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2018%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2012%20-%3E%2011%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%0A%2C%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%203%20-%3E%204%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2011%20-%3E%2010%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%0A%2C%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2011%20-%3E%209%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2016%20-%3E%208%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2015%20-%3E%207%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2014%20-%3E%206%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%201%20-%3E%205%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2011%20-%3E%208%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%204%20-%3E%207%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%204%20-%3E%206%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%204%20-%3E%205%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2013%20-%3E%2011%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%0A%2C%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%200%20-%3E%204%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2018%20-%3E%2010%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%0A%2C%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2017%20-%3E%209%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%7D%0A
+
     Ok(())
   }
 }
