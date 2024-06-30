@@ -1,4 +1,3 @@
-
 #[cfg(not(debug_assertions))]
 use human_panic::setup_panic;
 use tracing::subscriber::{self, SetGlobalDefaultError};
@@ -9,9 +8,9 @@ extern crate better_panic;
 use tracing_subscriber::{self, fmt, layer::SubscriberExt};
 
 // [NOTE] tracing
-// 
+//
 // In code use:
-// 
+//
 // use std::{error::Error, io};
 // use tracing::{trace, debug, info, warn, error, Level};
 
@@ -26,39 +25,37 @@ pub fn install_logger() -> Result<(), SetGlobalDefaultError> {
   //   .with(fmt::layer())
   //   .with(tracing_subscriber::filter::EnvFilter::from_default_env())
   //   .init();
-    let subscriber = tracing_subscriber::fmt()
-      .compact()
-      ;
-      // .with
-      // .with(EnvFilter::from_default_env());
-    // let s = tracing_subscriber::registry().with(fmt::layer());
+  let subscriber = tracing_subscriber::fmt().compact();
+  // .with
+  // .with(EnvFilter::from_default_env());
+  // let s = tracing_subscriber::registry().with(fmt::layer());
 
-    // #[cfg(debug_assertions)]
-    // let subscriber = subscriber.with_max_level(tracing::Level::DEBUG);
+  // #[cfg(debug_assertions)]
+  // let subscriber = subscriber.with_max_level(tracing::Level::DEBUG);
 
-    let subscriber = subscriber.finish();
-    return tracing::subscriber::set_global_default(subscriber);
+  let subscriber = subscriber.finish();
+  return tracing::subscriber::set_global_default(subscriber);
 }
 
 pub fn init_logging() -> Result<(), SetGlobalDefaultError> {
-    // Human Panic. Only enabled when *not* debugging.
-    #[cfg(not(debug_assertions))]
-    {
-      setup_panic!();
-    }
-  
-    // Better Panic. Only enabled *when* debugging.
-    #[cfg(debug_assertions)]
-    {
-      better_panic::Settings::debug()
-        .most_recent_first(false)
-        .lineno_suffix(true)
-        .verbosity(better_panic::Verbosity::Full)
-        .install();
-    }
-  
-    // Setup Logging
-    install_logger()?;
-  
-    Ok(())
+  // Human Panic. Only enabled when *not* debugging.
+  #[cfg(not(debug_assertions))]
+  {
+    setup_panic!();
+  }
+
+  // Better Panic. Only enabled *when* debugging.
+  #[cfg(debug_assertions)]
+  {
+    better_panic::Settings::debug()
+      .most_recent_first(false)
+      .lineno_suffix(true)
+      .verbosity(better_panic::Verbosity::Full)
+      .install();
+  }
+
+  // Setup Logging
+  install_logger()?;
+
+  Ok(())
 }
