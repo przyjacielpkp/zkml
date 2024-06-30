@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
 use ark_ff::Field;
 use ark_relations::{
@@ -18,7 +18,36 @@ use luminal::{
 };
 use tracing::{info, instrument};
 
-use crate::scalar::ScalarGraph;
+use crate::scalar::{InputsTracker, ScalarGraph};
+
+/// Tensor computation is initialized by setting input tensors data and then evaluating.
+/// This function takes a mapping from input index to its tensor and creates a
+/// mapping useful for the snark synthesis where input nodes are mapped to scalar values
+/// using the given mapping from big tensor input nodes to little scalar input nodes.
+pub fn snark_input_mapping<F: From<u128>>(
+  assignment: HashMap<NodeIndex, Option<Vec<f32>>>,
+  scale: usize,
+  inputs_tracker: InputsTracker,
+) -> HashMap<NodeIndex, SourceType<F>> {
+  let mut result = HashMap::new();
+  // privates
+  assignment.into_iter().for_each(|(k, v)| match v {
+    Some(vv) => inputs_tracker.new_inputs[&k]
+      .iter()
+      .zip(vv)
+      .for_each(|(x, a)| {
+        result.insert(x.clone(), SourceType::scaled_private(a, scale));
+      }),
+    None => inputs_tracker.new_inputs[&k].iter().for_each(|x| {
+      result.insert(x.clone(), SourceType::Private(None));
+    }),
+  });
+  // public
+  inputs_tracker.constants.into_iter().for_each(|(k, v)| {
+    result.insert(k, SourceType::scaled_public(v, scale));
+  });
+  result
+}
 
 #[derive(Debug)]
 pub enum SourceType<F> {
@@ -26,19 +55,32 @@ pub enum SourceType<F> {
   Public(F),
 }
 
-#[derive(Debug)]
-pub struct MLSnark<F> {
-  pub graph: ScalarGraph,
-  pub source_nodes_map: HashMap<NodeIndex, SourceType<F>>,
+impl<F: From<u128>> SourceType<F> {
+  pub fn scaled_private(x: f32, scale: usize) -> Self {
+    let y: u128 = (x * (scale as f32)).round() as u128;
+    SourceType::Private(Some(F::from(y)))
+  }
+  pub fn scaled_public(x: f32, scale: usize) -> Self {
+    let y: u128 = (x * (scale as f32)).round() as u128;
+    SourceType::Public(F::from(y))
+  }
 }
 
-impl<F: Field> ConstraintSynthesizer<F> for MLSnark<F> {
+#[derive(Debug)]
+pub struct MLSnark {
+  pub graph: ScalarGraph,
+  pub scale: usize,
+  pub private_inputs: HashMap<NodeIndex, Option<Vec<f32>>>,
+}
+
+impl<F: Field> ConstraintSynthesizer<F> for MLSnark {
   // THIS-WORKS
 
   #[instrument(level = "debug", name = "generate_constraints")]
   fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
     let graph = &self.graph.graph;
-    let source_map = &self.source_nodes_map;
+    let source_map =
+      snark_input_mapping(self.private_inputs, self.scale, self.graph.inputs_tracker);
 
     let pi = petgraph::algo::toposort(&graph.graph, None).unwrap();
     let mut vars: HashMap<NodeIndex, ark_relations::r1cs::Variable> = HashMap::new();
@@ -61,7 +103,7 @@ impl<F: Field> ConstraintSynthesizer<F> for MLSnark<F> {
       if incoming.is_empty() {
         let src_ty = source_map
           .get(&x)
-          .unwrap_or_else(|| panic!("No source for node {:?}", x));
+          .unwrap_or_else(|| panic!("Unknown source node {:?}!", x));
         use SourceType::*;
         let (v, ass) = match src_ty {
           Private(mn) => (

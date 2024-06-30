@@ -26,6 +26,7 @@ use luminal::{
 #[derive(Debug)]
 pub struct ScalarGraph {
   pub graph: Graph,
+  pub inputs_tracker: InputsTracker,
 }
 
 /// Rewrite the static tensor computation to scalar computation.
@@ -34,8 +35,11 @@ pub fn scalar(mut cx: Graph) -> ScalarGraph {
   // let mut cx1 = (&cx).clone().clone();
   // we dont care about remap for now
   let mut remap: Vec<NodeIndex> = vec![];
-  let ((), ()) = cx.compile(ScalarCompiler::default(), &mut remap);
-  ScalarGraph { graph: cx }
+  let ((), inputs_tracker) = cx.compile(ScalarCompiler::default(), &mut remap);
+  ScalarGraph {
+    graph: cx,
+    inputs_tracker,
+  }
 }
 
 #[derive(Debug, Default)]
@@ -79,11 +83,29 @@ impl Operator for InputOp {
   }
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct ConstantOp {}
+
+impl Operator for ConstantOp {
+  fn process(&mut self, _inp: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
+    panic!("InputOp: We wont be evaluating it either way")
+  }
+}
+
+#[derive(Debug, Default)]
+/// Remembers how to supply inputs to scalar graph to match inputs to tensor graph.
+/// Tracks inputs and constant.
+pub struct InputsTracker {
+  /// If x was of shape (2, 3) then new_inputs[x] should be a vector of length 6
+  pub new_inputs: HashMap<NodeIndex, Vec<NodeIndex>>,
+  pub constants: HashMap<NodeIndex, f32>,
+}
+
 #[derive(Debug, Default)]
 pub struct Scalarize;
 
 impl Compiler for Scalarize {
-  type Output = ();
+  type Output = InputsTracker;
 
   // THIS-WORKS
 
@@ -95,7 +117,7 @@ impl Compiler for Scalarize {
   /// We want to create shape many little nodes with outputs (and as many as needed nodes to implement the rest of the circuit).
   /// We connect the outgoing edges to corresponding little nodes using indices like with tensors.
   /// We create edges connecting our little nodes to source nodes. For every source there will source's shape many edges going from that source.
-  fn compile<T: ToIdsMut>(&self, graph: &mut Graph, mut _ids: T) {
+  fn compile<T: ToIdsMut>(&self, graph: &mut Graph, mut _ids: T) -> InputsTracker {
     // Assumes that all outgoing edges have same shape from a given node. NOTE: why? not needed once realized physical shape is always going to be same for single output.
     // FIX: ^ Not true.
 
@@ -109,6 +131,7 @@ impl Compiler for Scalarize {
     // mark retrieve nodes
     let mark_retrieve = |x: &NodeIndex, new_xs: Vec<_>, g: &mut Graph| {
       if let Some(w) = g.to_retrieve.get(x) {
+        assert!(w.0 == 0, "Assuming single output");
         for new_x in new_xs {
           // let new_x : NodeIndex = new_x;
           g.to_retrieve.insert(
@@ -231,6 +254,8 @@ impl Compiler for Scalarize {
       little_nodes
     }
 
+    let mut inputs_tracker = InputsTracker::default();
+
     // precalculate all physical sizes as we're going to be removing edges
     let sizes = graph
       .node_identifiers()
@@ -262,11 +287,32 @@ impl Compiler for Scalarize {
       let size = sizes[&x];
 
       let little_nodes = if incoming.is_empty() {
-        // TODO: treat Constants different to Input
         // x is source
-        let little_nodes = make_nodes(size, InputOp {}, graph);
-        connect_out_edges(x, &little_nodes, graph);
-        little_nodes
+        if graph.check_node_type::<Function>(x) {
+          // Function op could be in anything but as a source node in practical terms it means an input.
+          // TODO: treat Constants different to Input
+          let little_nodes = make_nodes(size, InputOp {}, graph);
+          connect_out_edges(x, &little_nodes, graph);
+          inputs_tracker.new_inputs.insert(x, little_nodes.clone());
+          little_nodes
+        } else if graph.check_node_type::<Constant>(x) {
+          let little_nodes = make_nodes(size, ConstantOp {}, graph);
+          connect_out_edges(x, &little_nodes, graph);
+          let val = graph.node_weight_mut(x).unwrap().process(vec![])[0]
+            .downcast_ref::<Vec<f32>>()
+            .unwrap()
+            .clone()[0];
+          assert!(
+            little_nodes.len() == 1,
+            "Constants are expected to be scalars"
+          );
+          little_nodes.iter().for_each(|y| {
+            inputs_tracker.constants.insert(*y, val);
+          });
+          little_nodes
+        } else {
+          panic!("Unsupported source node type!")
+        }
       } else if let Some((((_, _, _), x),)) = incoming.iter().collect_tuple() {
         todo!("Unop")
       }
@@ -293,6 +339,8 @@ impl Compiler for Scalarize {
       mark_retrieve(&x, little_nodes, graph);
       graph.remove_node(x);
     }
+
+    return inputs_tracker;
   }
 }
 
