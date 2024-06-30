@@ -65,6 +65,16 @@ pub type ScalarCompiler = (
     Scalarize
 );
 
+#[derive(Debug, Default, Clone)]
+/// In the scalar graph used for source nodes no matter they original Op.
+pub struct InputOp {}
+
+impl Operator for InputOp {
+  fn process(&mut self, _inp: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
+    panic!("InputOp: We wont be evaluating it either way")
+  }
+}
+
 #[derive(Debug, Default)]
 pub struct Scalarize;
 
@@ -120,6 +130,68 @@ impl Compiler for Scalarize {
           None => { panic!("Node's output shape is not static.") },
         }
       };
+      
+      // We split node into multiple nodes instead.
+      // This helper creates the little nodes all with same Op.
+      fn make_nodes<T: Operator + 'static + Clone>(size : usize, op : T, graph: &mut Graph) -> Vec<NodeIndex> {
+        let mut little_nodes = vec![];
+        for _ in 0..size {
+          little_nodes.push(graph.add_op(op.clone()).finish())
+        }
+        little_nodes
+      }
+
+      fn connect_out_edges(x: NodeIndex, little_nodes: &Vec<NodeIndex>, graph: &mut Graph) {
+        let out_edges : Vec<_> = graph.graph.edges_directed(x, Outgoing)
+        .filter_map(|e| e.weight().as_data().map(|d| (d, e.target()) ) )
+        .collect()
+        ;
+        // assuming again that all outgoing shapes are the same
+        // ^ NO, wrong, we dont assume that.
+        for ((input_order, output_order, shape), target) in out_edges {
+          // using output_order as the remembered index in logical shape
+          // TODO: not recalculate the index_expressions so much 
+          let phys_index = match logical_to_physical(&(shape.index_expression(),shape.valid_expression()), output_order.into()) {
+              Some(i) => {i},
+              None => { panic!("Something fucked up, outgoing edge index outside of expected physical size") },
+          };
+          info!("phys={:?}, i={:?}, output={:?}", phys_index, input_order, output_order);
+          graph.add_edge(
+            little_nodes[ phys_index ] ,
+            target,
+            Dependency::Data{
+              input_order, 
+              output_order: 0, // assuming single output
+              shape : R0::to_tracker()}
+          );
+        }
+      }
+
+      fn pointwise_op<T: Operator + 'static + Clone>(op : T, x : NodeIndex, size : usize, incoming : &Vec<((u8, u8, ShapeTracker), NodeIndex)>, graph: &mut Graph) 
+         -> Vec<NodeIndex> {
+        let little_nodes = make_nodes(size, op, graph);
+        connect_out_edges(x, &little_nodes, graph);
+
+        for ((b, output_order, shape), source) in incoming {
+          assert!(*output_order == 0, "Assuming sigle valued Op's");
+          // assuming static shape
+          let k = shape.n_elements().to_usize().unwrap();
+          assert!( k == size, "Expected physical shape to be the same as incoming logical shape. size = {}, k = {}, src = {:?}", size, k, source ); // Op specific
+          for j in 0..k {
+            let (from, to) = (j as u8, j); // Op specific
+            debug!("k={:?}, j={:?}, b={:?}", k, j, b);
+            graph.add_edge(
+              source.clone(),
+              little_nodes[to],
+              Dependency::Data{
+                input_order: *b as u8,
+                output_order : from, // saving the logical index that we used that edge for
+                shape : *shape, // saving the original shape. TODO: save once, not in every little edge 
+              });
+          }
+        }
+        little_nodes
+      }
 
       // precalculate all physical sizes as we're going to be removing edges
       let sizes = graph.node_identifiers()
@@ -134,134 +206,47 @@ impl Compiler for Scalarize {
       };
       info!("first node in reverse toposorted graph: {:?}", pi[0]);
 
-      // TODO: this demands the obvious refactor
-
+      // for every node:
+      // 0. Match x on Op and arity
+      // 1. Create pack of little nodes replacing x
+      // 2. Connect outgoing edges, based on indices of the edges which from previous step are indexed like shape's logical indexes
+      // 3. Create edges for incoming edges, connect as needed by the Op. Use output_order as indices, fix later when connecting from source.
+      // 4. Remove x. Mark the new nodes for retrieval.
       for x in pi {
         info!("x={:?} in g={:?}", x, graph.graph);
-        // 0. Match x on Op and arity
-        // 1. Create pack of little nodes replacing x
-        // 2. Connect outgoing edges, based on indices of the edges which from previous step are indexed like shape's logical indexes
-        // 3. Create edges for incoming edges, connect as needed by the Op. Use output_order as indices, fix later when connecting from source.
-        // 4. Remove x. Mark the new nodes for retrieval.
-
+        
         let incoming: Vec<_> = graph.edges_directed(x, Incoming)
           .filter_map(|e| e.weight().as_data().map(|d| (d, e.source())))
           .sorted_by_key(|((inp,_,_),_)| *inp )
           .collect();
-        
-        // x is source
-        let little_nodes = if incoming.is_empty() {
-          // split node into multiple nodes instead
-          // for 
-          let n = sizes[&x];
-          let little_nodes = { 
-              let mut little_nodes = vec![];
-              for _ in 0..n { 
-                little_nodes.push(graph.add_op(Add{}).finish())
-              }
-              little_nodes
-            };
-            
-          let out_edges : Vec<_> = graph.graph.edges_directed(x, Outgoing)
-              .filter_map(|e| e.weight().as_data().map(|d| (d, e.target()) ) )
-              .collect()
-              ;
-          // out edges:
-          for ((input_order, output_order, shape), target) in out_edges {
-            // using output_order as the remembered index in logical shape
-            // TODO: not recalculate the index_expressions so much 
-            let phys_index = match logical_to_physical(&(shape.index_expression(),shape.valid_expression()), output_order.into()) {
-                Some(i) => {i},
-                None => { panic!("Something fucked up, outgoing edge index outside of expected physical size") },
-            };
-            graph.add_edge(
-              little_nodes[ phys_index ] , 
-              target,
-              Dependency::Data{
-                input_order, 
-                output_order: 0, // assuming single output
-                shape : R0::to_tracker()}
-            );
-          }
-          // START HERE
-          // need to remove x, below
+        let size = sizes[&x];
 
+        let little_nodes = if incoming.is_empty() {
+          // TODO: treat Constants different to Input
+          // x is source
+          let little_nodes = make_nodes(size, InputOp{}, graph);
+          connect_out_edges(x, &little_nodes, graph);
           little_nodes
         }
-
         else if let Some((((_, _, _), x), )) = incoming.iter().collect_tuple() {
           todo!("Unop")
         }
         // x is binop
-        else if let Some((ll, rr)) = incoming.into_iter().collect_tuple() {
-          
-          // x is Add
+        else if let Some((ll, rr)) = incoming.iter().collect_tuple() {
+
           if graph.check_node_type::<Add>(x) {
-
-            info!("Add {:?} {:?}", ll, rr);
-
-            let n = sizes[&x];
-            let little_nodes = { 
-              let mut little_nodes = vec![];
-              for _ in 0..n { 
-                little_nodes.push(graph.add_op(Add{}).finish())
-              }
-              little_nodes
-            };
-
-            let out_edges : Vec<_> = graph.graph.edges_directed(x, Outgoing)
-              .filter_map(|e| e.weight().as_data().map(|d| (d, e.target()) ) )
-              .collect()
-              ;
-            // assuming again that all outgoing shapes are the same
-            // ^ NO, wrong, we dont assume that.
-
-            // out edges:
-            for ((input_order, output_order, shape), target) in out_edges {
-              // using output_order as the remembered index in logical shape
-              // TODO: not recalculate the index_expressions so much 
-              let phys_index = match logical_to_physical(&(shape.index_expression(),shape.valid_expression()), output_order.into()) {
-                  Some(i) => {i},
-                  None => { panic!("Something fucked up, outgoing edge index outside of expected physical size") },
-              };
-              info!("n={:?}, phys={:?}, i={:?}, output={:?}", n, phys_index, input_order, output_order);
-              graph.add_edge(
-                little_nodes[ phys_index ] ,
-                target,
-                Dependency::Data{
-                  input_order, 
-                  output_order: 0, // assuming single output
-                  shape : R0::to_tracker()}
-              );
-            }
-            
-            // edges l, r
-            let in_edges = vec![ll, rr];
-            for ((b, output_order, shape), source) in in_edges {
-              assert!(output_order == 0, "Assuming sigle valued Op's");
-              // assuming static shape
-              let k = shape.n_elements().to_usize().unwrap();
-              assert!( k == n, "In Add expected physical shape to be the same as incoming logical shape. n = {}, k = {}, src = {:?}", n, k, source ); // Op specific
-              for j in 0..k {
-                let (from, to) = (j as u8, j); // Op specific
-                info!("n={:?}, k={:?}, j={:?}, b={:?}", n, k, j, b);
-                graph.add_edge(
-                  source.clone(),
-                  little_nodes[to],
-                  Dependency::Data{
-                    input_order: b as u8,
-                    output_order : from, // saving the logical index that we used that edge for
-                    shape, // saving the original shape. TODO: save once, not in every little edge 
-                  });
-              }
-            }
-            little_nodes
+            debug!("Add {:?} {:?}", ll, rr);
+            pointwise_op(Add{}, x, size, &incoming, graph)
           } else if graph.check_node_type::<Mul>(x) {
-            todo!("Unsupoorted Mul");
+            debug!("Mul {:?} {:?}", ll, rr);
+            pointwise_op(Mul{}, x, size, &incoming, graph)
+          } else if graph.check_node_type::<LessThan>(x) {
+            debug!("Mul {:?} {:?}", ll, rr);
+            pointwise_op(LessThan{}, x, size, &incoming, graph)
           } else {
-            todo!("Unsupported yet binop!")
+            todo!("Unsupported yet binop!") // are there any other binops we need? A: yes, comparisons
           }
-        // x is not that
+
         } else {
           // TODO: error handling
           panic!("unexpected node type")
@@ -272,16 +257,7 @@ impl Compiler for Scalarize {
         graph.remove_node(x);
         
       }
-        // x is Add
-        // x is Mul
-        // x is unop
-        // x is source
-      //   if graph.check_node_type::<Add>(x) {
-      //     if 
-      //   } else {
-
-      //   }
-      }
+  }
 }
 
 pub fn save_graphviz( path : String, graph : & Graph) -> Result<(), Box<dyn Error>> {
