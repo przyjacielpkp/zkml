@@ -25,7 +25,21 @@ use luminal::{
 /// Asserts (in non-strictly-typed way) that all input tensors are single values.
 #[derive(Debug)]
 pub struct ScalarGraph {
+  /// Note Graph representation: 
+  ///   Graph is a DAG of the expression defining a tensor computation.
+  ///   
+  ///   Nodes keep weights signifying operations. You check the weight by type assertions on the node weight.
+  ///   Edges keep the shape incoming from node to node. That means that an incoming edge:
+  ///     - records the index in argument list to the operation in the target node
+  ///     - records an expression that maps logical tensor indices in the incoming tensor to physical indices in what will be evaluated in source node
+  ///     - records the shape (n,) of the physical tensor in what will be evaluated in source node
+  /// 
+  ///   As we are concerned with a snark computation derived from the graph here,
+  ///   we don't care about evaluation step. We are only concerned about rewrites of the static computation graph.
+  ///
+  ///   Scalar: means all shapes at edges are (1,).
   pub graph: Graph,
+  /// In the rewrite to scalar we substitute nodes for multiple nodes, here's a mapping tracking that.
   pub inputs_tracker: InputsTracker,
 }
 
@@ -46,6 +60,8 @@ pub fn scalar(mut cx: Graph) -> ScalarGraph {
 pub struct UniformOutShapes;
 
 /// Kinda obsolete
+/// This step doesn't modify the graph, only asserts a property (uniform shapes).
+/// We keep it out of interest in whether it succeeds. Comment out the moment it fails and we know why.
 impl Compiler for UniformOutShapes {
   type Output = ();
   #[instrument(level = "debug", skip(ids))]
