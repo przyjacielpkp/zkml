@@ -202,6 +202,8 @@ impl Compiler for Scalarize {
       little_nodes
     }
 
+    /// When looking at node x, already the outgoing edges are created and wired to little circuit created when substituting for nodes previous to x.
+    /// This helper connects these edges to <x physical shape> many little nodes.
     fn connect_out_edges(x: NodeIndex, little_nodes: &Vec<NodeIndex>, graph: &mut Graph) {
       let out_edges: Vec<_> = graph
         .graph
@@ -293,6 +295,9 @@ impl Compiler for Scalarize {
     // 3. Create edges for incoming edges, connect as needed by the Op. Use output_order as indices, fix later when connecting from source.
     // 4. Remove x. Mark the new nodes for retrieval.
     for x in pi {
+      // Invariant of the loop:
+      //  - all nodes upstream from x (later in toposort) were already substituted for many scalar nodes.
+      //  - the outgoing edges are of scalar shape and we have recorded *what physical index in the result of x the edge connects to*
       info!("x={:?} in g={:?}", x, graph.graph);
 
       let incoming: Vec<_> = graph
@@ -306,7 +311,6 @@ impl Compiler for Scalarize {
         // x is source
         if graph.check_node_type::<Function>(x) {
           // Function op could be in anything but as a source node in practical terms it means an input.
-          // TODO: treat Constants different to Input
           let little_nodes = make_nodes(size, InputOp {}, graph);
           connect_out_edges(x, &little_nodes, graph);
           inputs_tracker.new_inputs.insert(x, little_nodes.clone());
