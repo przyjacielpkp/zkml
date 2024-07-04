@@ -7,7 +7,6 @@ use snark::MLSnark;
 
 pub mod subcommands;
 
-pub mod integer;
 pub mod notes;
 pub mod scalar;
 pub mod snark;

@@ -73,6 +73,29 @@ pub struct MLSnark {
   pub private_inputs: HashMap<NodeIndex, Option<Vec<f32>>>,
 }
 
+/// NOTE on integer vs float computation: 
+/// 
+/// The ML computation is obviously meant to evaluate to floats.
+/// If we were to take the static description of the expression for evaluation, but treat all Op's as if 
+/// they act on integers - then what changes do we need to do to the expression? 
+/// 
+/// We define a scale factor and use integer `round(scale * f)` to represent a float `f`.
+/// Firstly, we scale the inputs by scale factor.
+/// Addition and  operations are fine as is.
+/// Mul needs to divide the result by scale, sth along the lines for Recip, etc. LessThan probably needs to divide by scale (?).
+/// In the end result is multiplied by scale.
+/// 
+/// Q: There is two ways in terms of code structure to implement this.
+///    We can separate it into a compilation step or we can combine this step with snark synthesis.
+/// Both are fine.
+/// For example, in snark we see multiplication and
+/// we'd like to just say: Mul_float a b => (Mul_int a' b') / scale
+/// But because can't divide (TODO: can we?) we instead take additional witness for the division result and say:
+///   Mul_float a b => (if (Mul_int a' b' == witness * scale)) then witness else abort
+/// If doing a seperate integer step we'd say: Mul_float a b => (Div_int scale (Mul_int a' b'))
+/// and then snark synthesis would rewrite Div_int to a similar circuit as above.
+///
+
 impl<F: Field> ConstraintSynthesizer<F> for MLSnark {
   // THIS-WORKS
 
