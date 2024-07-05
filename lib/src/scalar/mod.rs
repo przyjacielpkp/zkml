@@ -25,7 +25,21 @@ use luminal::{
 /// Asserts (in non-strictly-typed way) that all input tensors are single values.
 #[derive(Debug)]
 pub struct ScalarGraph {
+  /// Note Graph representation: 
+  ///   Graph is a DAG of the expression defining a tensor computation.
+  ///   
+  ///   Nodes keep weights signifying operations. You check the weight by type assertions on the node weight.
+  ///   Edges keep the shape incoming from node to node. That means that an incoming edge:
+  ///     - records the index in argument list to the operation in the target node
+  ///     - records an expression that maps logical tensor indices in the incoming tensor to physical indices in what will be evaluated in source node
+  ///     - records the shape (n,) of the physical tensor in what will be evaluated in source node
+  /// 
+  ///   As we are concerned with a snark computation derived from the graph here,
+  ///   we don't care about evaluation step. We are only concerned about rewrites of the static computation graph.
+  ///
+  ///   Scalar: means all shapes at edges are (1,).
   pub graph: Graph,
+  /// In the rewrite to scalar we substitute nodes for multiple nodes, here's a mapping tracking that.
   pub inputs_tracker: InputsTracker,
 }
 
@@ -46,6 +60,8 @@ pub fn scalar(mut cx: Graph) -> ScalarGraph {
 pub struct UniformOutShapes;
 
 /// Kinda obsolete
+/// This step doesn't modify the graph, only asserts a property (uniform shapes).
+/// We keep it out of interest in whether it succeeds. Comment out the moment it fails and we know why.
 impl Compiler for UniformOutShapes {
   type Output = ();
   #[instrument(level = "debug", skip(ids))]
@@ -186,6 +202,8 @@ impl Compiler for Scalarize {
       little_nodes
     }
 
+    /// When looking at node x, already the outgoing edges are created and wired to little circuit created when substituting for nodes previous to x.
+    /// This helper connects these edges to <x physical shape> many little nodes.
     fn connect_out_edges(x: NodeIndex, little_nodes: &Vec<NodeIndex>, graph: &mut Graph) {
       let out_edges: Vec<_> = graph
         .graph
@@ -277,6 +295,9 @@ impl Compiler for Scalarize {
     // 3. Create edges for incoming edges, connect as needed by the Op. Use output_order as indices, fix later when connecting from source.
     // 4. Remove x. Mark the new nodes for retrieval.
     for x in pi {
+      // Invariant of the loop:
+      //  - all nodes upstream from x (later in toposort) were already substituted for many scalar nodes.
+      //  - the outgoing edges are of scalar shape and we have recorded *what physical index in the result of x the edge connects to*
       info!("x={:?} in g={:?}", x, graph.graph);
 
       let incoming: Vec<_> = graph
@@ -290,7 +311,6 @@ impl Compiler for Scalarize {
         // x is source
         if graph.check_node_type::<Function>(x) {
           // Function op could be in anything but as a source node in practical terms it means an input.
-          // TODO: treat Constants different to Input
           let little_nodes = make_nodes(size, InputOp {}, graph);
           connect_out_edges(x, &little_nodes, graph);
           inputs_tracker.new_inputs.insert(x, little_nodes.clone());
