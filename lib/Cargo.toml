@@ -14,7 +14,7 @@ tokio = "1.38.0"
 tracing-subscriber = "0.3.18"
 tracing = "0.1.37"
 # luminal = "0.2.0"
-luminal = { git = "https://github.com/jafioti/luminal.git", rev = "8d36e70" }
+# luminal = { git = "https://github.com/jafioti/luminal.git", rev = "8d36e70" }
 itertools = "0.13.0"
 dfdx = "0.13.0" # maybe completely unneeded
 rand = "0.8.5"
@@ -35,3 +35,6 @@ ark-r1cs-std = { version = "^0.3.0", default-features = false }
 ark-groth16 = {version = "^0.3.0", default-features = false }
 ark-marlin = {version = "^0.3.0", default-features = false }
 blake2 = { version = "0.9", default-features = false }
+luminal_training = { path = "../../luminal/crates/luminal_training"}
+luminal = { path = "../../luminal"}
+luminal_nn = { path = "../../luminal/crates/luminal_nn"}

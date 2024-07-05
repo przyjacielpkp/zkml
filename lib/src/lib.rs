@@ -6,6 +6,7 @@ use scalar::scalar;
 use snark::MLSnark;
 
 pub mod subcommands;
+pub mod model;
 
 pub mod notes;
 pub mod scalar;
