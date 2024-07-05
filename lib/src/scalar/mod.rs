@@ -333,8 +333,45 @@ impl Compiler for Scalarize {
         } else {
           panic!("Unsupported source node type!")
         }
-      } else if let Some((((_, _, _), x),)) = incoming.iter().collect_tuple() {
-        todo!("Unop")
+      } else if let Some((yy,)) = incoming.iter().collect_tuple() {
+        if graph.check_node_type::<Recip>(x) { 
+          // same as Add but unop
+          // TODO: this works right???
+          pointwise_op( Recip{}, x, size, &incoming, graph)     
+        } else if graph.check_node_type::<SumReduce>(x) {
+          let ((_, _, sh), y) = yy;
+          let ax : &SumReduce = graph.node_weight(x).unwrap().as_any().downcast_ref().unwrap();
+          let dims = sh.shape_usize();
+          let ax_len = dims[ax.0];
+          assert!(ax_len > 1, "Why reducing scalar? but also im lazy to implement that edgecase.");
+          let front_size = dims.iter().take(ax.0).product::<usize>().max(1);
+          let back_size = dims.iter().skip(ax.0 + 1).product::<usize>().max(1);
+          assert!(size == sh.n_elements().to_usize().unwrap() / ax_len, "Expect result size to be the size after collapsing the ax dim.");
+          assert!(size == front_size * back_size);
+          let create_reduce_circuit = |i| {
+            let front_i = i / front_size;
+            let back_i = i % front_size;
+            assert!(front_i * front_size + back_i == i);
+            let xs = (0..ax_len).map(|k| {
+              front_i * back_size * ax_len + k * back_size + back_i // index in y of k-th element in current axe
+              // START HERE
+              // so it all looks fine, just refactor to implement also MaxReduce
+              // BUT the trick with recording the in shape index in edges' from_output field
+              // finally turned out silly due to it beign u8 DUMBASS
+            });
+            xs.fold(*y, |l_node, k|
+              graph.add_op(Add{})
+                .input(l_node, 0 /* assuming yy outputs one vector */, R0::to_tracker())
+                .input(*y, k /* recording the index for when rewriting y */, R0::to_tracker())
+                .finish()
+            )
+          };
+          let little_nodes: Vec<NodeIndex> =  (0..size).map(create_reduce_circuit).collect();
+          connect_out_edges(x, &little_nodes, graph);
+          little_nodes
+        } else {
+          panic!("Unsupported unop OP")
+        }
       }
       // x is binop
       else if let Some((ll, rr)) = incoming.iter().collect_tuple() {
