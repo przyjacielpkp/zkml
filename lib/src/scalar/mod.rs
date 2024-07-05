@@ -10,9 +10,7 @@ use luminal::graph::Graph;
 use std::{collections::HashMap, error::Error, fs::File, io::Write};
 
 use itertools::Itertools;
-use petgraph::{
-  visit::{EdgeRef, IntoNodeIdentifiers},
-  Direction::{Incoming, Outgoing},
+use petgraph::{graph::EdgeIndex, visit::{EdgeRef, IntoNodeIdentifiers}, Direction::{Incoming, Outgoing}
 };
 use tracing::{debug, info, instrument, warn};
 
@@ -204,20 +202,20 @@ impl Compiler for Scalarize {
 
     /// When looking at node x, already the outgoing edges are created and wired to little circuit created when substituting for nodes previous to x.
     /// This helper connects these edges to <x physical shape> many little nodes.
-    fn connect_out_edges(x: NodeIndex, little_nodes: &Vec<NodeIndex>, graph: &mut Graph) {
+    fn connect_out_edges(x: NodeIndex, little_nodes: &Vec<NodeIndex>, edge_src_indices : &HashMap<EdgeIndex, usize>, graph: &mut Graph) {
       let out_edges: Vec<_> = graph
         .graph
         .edges_directed(x, Outgoing)
-        .filter_map(|e| e.weight().as_data().map(|d| (d, e.target())))
+        .filter_map(|e| e.weight().as_data().map(|d| (e.id(), d, e.target())))
         .collect();
-      // assuming again that all outgoing shapes are the same
-      // ^ NO, wrong, we dont assume that.
-      for ((input_order, output_order, shape), target) in out_edges {
+      
+      for (e, (input_order, output_order, shape), target) in out_edges {
+        let logical_index = edge_src_indices[&e];
         // using output_order as the remembered index in logical shape
         // TODO: not recalculate the index_expressions so much
         let phys_index = match logical_to_physical(
           &(shape.index_expression(), shape.valid_expression()),
-          output_order.into(),
+          logical_index,
         ) {
           Some(i) => i,
           None => {
@@ -233,7 +231,7 @@ impl Compiler for Scalarize {
           target,
           Dependency::Data {
             input_order,
-            output_order: 0, // assuming single output
+            output_order,
             shape: R0::to_tracker(),
           },
         );
@@ -244,27 +242,29 @@ impl Compiler for Scalarize {
       op: T,
       x: NodeIndex,
       size: usize,
-      incoming: &Vec<((u8, u8, ShapeTracker), NodeIndex)>,
+      incoming: &Vec<(EdgeIndex, (u8, u8, ShapeTracker), NodeIndex)>,
+      edge_src_indices: &mut HashMap<EdgeIndex, usize>,
       graph: &mut Graph,
     ) -> Vec<NodeIndex> {
       let little_nodes = make_nodes(size, op, graph);
-      connect_out_edges(x, &little_nodes, graph);
+      connect_out_edges(x, &little_nodes, edge_src_indices, graph);
 
-      for ((b, output_order, shape), source) in incoming {
-        assert!(*output_order == 0, "Assuming sigle valued Op's");
+      for (e, (b, output_order, shape), source) in incoming {
+        // assert!(*output_order == 0, "Assuming sigle valued Op's"); // actually idk if we do
         // assuming static shape
         let k = shape.n_elements().to_usize().unwrap();
         assert!( k == size, "Expected physical shape to be the same as incoming logical shape. size = {}, k = {}, src = {:?}", size, k, source ); // Op specific
         for j in 0..k {
-          let (from, to) = (j as u8, j); // Op specific
+          let (from, to) = (j, j); // pointwise
           debug!("k={:?}, j={:?}, b={:?}", k, j, b);
+          edge_src_indices.insert(*e, from);
           graph.add_edge(
             source.clone(),
             little_nodes[to],
             Dependency::Data {
               input_order: *b as u8,
-              output_order: from, // saving the logical index that we used that edge for
-              shape: *shape, // saving the original shape. TODO: save once, not in every little edge
+              output_order: *output_order,
+              shape: *shape, // saving the original shape
             },
           );
         }
@@ -279,20 +279,21 @@ impl Compiler for Scalarize {
       .node_identifiers()
       .map(|x| (x, get_own_size(x, graph)))
       .collect::<HashMap<_, _>>();
-    info!("sizes: {:?}", sizes);
+
+    // when creating an edge targeting a newly made little node we need to remember for what index in the incoming shape it was made
+    let mut edge_src_indices : HashMap<EdgeIndex, usize> = HashMap::new();
 
     let pi = {
       let mut pi = petgraph::algo::toposort(&graph.graph, None).unwrap();
       pi.reverse();
       pi
     };
-    info!("first node in reverse toposorted graph: {:?}", pi[0]);
 
     // for every node:
     // 0. Match x on Op and arity
     // 1. Create pack of little nodes replacing x
     // 2. Connect outgoing edges, based on indices of the edges which from previous step are indexed like shape's logical indexes
-    // 3. Create edges for incoming edges, connect as needed by the Op. Use output_order as indices, fix later when connecting from source.
+    // 3. Create edges for incoming edges, connect as needed by the Op. Record wanted src index in map.
     // 4. Remove x. Mark the new nodes for retrieval.
     for x in pi {
       // Invariant of the loop:
@@ -302,8 +303,8 @@ impl Compiler for Scalarize {
 
       let incoming: Vec<_> = graph
         .edges_directed(x, Incoming)
-        .filter_map(|e| e.weight().as_data().map(|d| (d, e.source())))
-        .sorted_by_key(|((inp, _, _), _)| *inp)
+        .filter_map(|e| e.weight().as_data().map(|d| (e.id(), d, e.source())))
+        .sorted_by_key(|(_, (inp, _, _), _)| *inp)
         .collect();
       let size = sizes[&x];
 
@@ -312,12 +313,12 @@ impl Compiler for Scalarize {
         if graph.check_node_type::<Function>(x) {
           // Function op could be in anything but as a source node in practical terms it means an input.
           let little_nodes = make_nodes(size, InputOp {}, graph);
-          connect_out_edges(x, &little_nodes, graph);
+          connect_out_edges(x, &little_nodes, &edge_src_indices, graph);
           inputs_tracker.new_inputs.insert(x, little_nodes.clone());
           little_nodes
         } else if graph.check_node_type::<Constant>(x) {
           let little_nodes = make_nodes(size, ConstantOp {}, graph);
-          connect_out_edges(x, &little_nodes, graph);
+          connect_out_edges(x, &little_nodes, &edge_src_indices, graph);
           let val = graph.node_weight_mut(x).unwrap().process(vec![])[0]
             .downcast_ref::<Vec<f32>>()
             .unwrap()
@@ -333,20 +334,20 @@ impl Compiler for Scalarize {
         } else {
           panic!("Unsupported source node type!")
         }
-      } else if let Some((((_, _, _), x),)) = incoming.iter().collect_tuple() {
+      } else if let Some(((_, (_, _, _), x),)) = incoming.iter().collect_tuple() {
         todo!("Unop")
       }
       // x is binop
       else if let Some((ll, rr)) = incoming.iter().collect_tuple() {
         if graph.check_node_type::<Add>(x) {
           debug!("Add {:?} {:?}", ll, rr);
-          pointwise_op(Add {}, x, size, &incoming, graph)
+          pointwise_op(Add {}, x, size, &incoming, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<Mul>(x) {
           debug!("Mul {:?} {:?}", ll, rr);
-          pointwise_op(Mul {}, x, size, &incoming, graph)
+          pointwise_op(Mul {}, x, size, &incoming, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<LessThan>(x) {
           debug!("Mul {:?} {:?}", ll, rr);
-          pointwise_op(LessThan {}, x, size, &incoming, graph)
+          pointwise_op(LessThan {}, x, size, &incoming, &mut edge_src_indices, graph)
         } else {
           todo!("Unsupported yet binop!") // are there any other binops we need? A: yes, comparisons
         }
