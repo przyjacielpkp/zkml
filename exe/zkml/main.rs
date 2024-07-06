@@ -27,6 +27,7 @@ enum Command {
     #[arg(short, long, default_value_t = 4545)]
     port: u16,
   },
+  Model{},
 }
 
 #[tokio::main]
@@ -47,6 +48,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Command::Server { port } => {
       let app = subcommands::Server::new(port);
       app.run().await;
+    }
+    Command::Model {  } => {
+      lib::model::run_model();
     }
   }
   Ok(())
