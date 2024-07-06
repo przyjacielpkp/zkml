@@ -5,14 +5,15 @@ use std::collections::HashMap;
 use scalar::scalar;
 use snark::MLSnark;
 
-pub mod subcommands;
 pub mod model;
+pub mod subcommands;
 
 pub mod notes;
 pub mod scalar;
 pub mod snark;
 pub mod utils;
 
+/*
 /// Main crate export. Take a tensor computation and rewrite to snark.
 pub fn compile<F>(c: luminal::graph::Graph) -> MLSnark<F> {
   // TODO: BIG TODO: care about source map, need to record it from the beginning.
@@ -22,9 +23,9 @@ pub fn compile<F>(c: luminal::graph::Graph) -> MLSnark<F> {
     graph: sc,
     source_nodes_map: HashMap::new(),
   }
-}
+}*/
 
-#[cfg(test)]
+/*#[cfg(test)]
 mod tests {
   use std::collections::HashMap;
 
@@ -64,4 +65,4 @@ mod tests {
         rng,
         );
   }
-}
+}*/
