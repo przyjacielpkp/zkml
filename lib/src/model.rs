@@ -20,8 +20,6 @@ pub fn read_dataset() -> (Vec<[f32; 9]>, Vec<f32>) {
     parts.retain(|&a| a != "");
     let parts: Vec<f32> = parts.iter().map(|a| a.parse::<f32>().unwrap()).collect();
     let len = parts.len();
-    println!("{:?}", &parts[0..len - 1]);
-    println!("{:?}", &parts[len - 1]);
     x.push(parts[0..len - 1].try_into().unwrap());
     if parts[len - 1] == 2.0 {
       y.push(0.);
@@ -67,7 +65,7 @@ pub fn run_model() {
   let (mut new_weights, lr) = sgd_on_graph(&mut cx, &weights, &grads);
   cx.keep_tensors(&new_weights);
   cx.keep_tensors(&weights);
-  lr.set(1e-2);
+  lr.set(5e-3);
 
   #[cfg(all(not(feature = "metal"), not(feature = "cuda")))]
   cx.compile(
@@ -94,7 +92,7 @@ pub fn run_model() {
       let answer = [y.to_owned()];
       input.set(x.to_owned());
       target.set(answer);
-
+  
       cx.execute();
       transfer_data_same_graph(&new_weights, &weights, &mut cx);
       loss_avg.update(loss.data()[0]);
@@ -122,6 +120,7 @@ pub fn run_model() {
     start.elapsed().as_secs_f32(),
     start.elapsed().as_micros() / iter
   );
+  
 }
 
 pub struct ExponentialAverage {
