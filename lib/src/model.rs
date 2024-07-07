@@ -1,7 +1,7 @@
-use std::{convert::TryInto, fs, iter::zip};
+use std::{collections::VecDeque, convert::TryInto, fs, iter::zip};
 
 use luminal::prelude::*;
-use luminal_nn::{Linear, ReLU, Sigmoid};
+use luminal_nn::{Linear, ReLU};
 use luminal_training::{mse_loss, sgd_on_graph, Autograd};
 
 const FILE_PATH: &str = "data/rp.data";
@@ -44,6 +44,32 @@ pub fn split_dataset(
 
   (x_train, x_test, y_train, y_test)
 }
+
+
+pub fn normalize_data(
+  x: Vec<[f32; 9]>
+) -> Vec<[f32; 9]> {
+
+  let mut mins: [f32; 9] = [11 as f32; 9];
+  let mut maxs: [f32; 9] = [-1 as f32; 9];
+  
+  for a in x.iter(){
+    for i in 0..9{
+      mins[i] = f32::min(mins[i], a[i]);
+      maxs[i] = f32::min(maxs[i], a[i]);
+    }
+  }
+
+  let mut xp: Vec<[f32; 9]> = Vec::new();
+  for a in x.iter(){
+    let mut ap: [f32; 9] = [0 as f32; 9];
+    for i in 0..9{
+       ap[i] = (a[i] - mins[i]) / (maxs[i] - mins[i]);
+    }
+    xp.push(ap);
+  }
+  xp 
+}
 pub fn run_model() {
   // Setup gradient graph
   let mut cx = Graph::new();
@@ -53,7 +79,6 @@ pub fn run_model() {
     Linear<16, 16>,
     ReLU,
     Linear<16, 1>,
-    Sigmoid,
   )>::initialize(&mut cx);
   let mut input = cx.tensor::<R1<9>>();
   let mut target = cx.tensor::<R1<1>>();
@@ -86,6 +111,7 @@ pub fn run_model() {
 
   let (X, Y) = read_dataset();
   let (X_train, X_test, y_train, y_test) = split_dataset(X, Y, 0.8);
+  let X_train = normalize_data(X_train);
   let mut iter = 0;
   for _ in 0..EPOCHS {
     for (x, y) in zip(X_train.iter(), y_train.iter()) {
