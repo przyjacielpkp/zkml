@@ -12,6 +12,7 @@ pub mod notes;
 pub mod scalar;
 pub mod snark;
 pub mod utils;
+
 //
 // /// Main crate export. Take a tensor computation and rewrite to snark.
 // pub fn compile<F>(c: luminal::graph::Graph) -> MLSnark<F> {
