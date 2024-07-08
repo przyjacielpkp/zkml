@@ -1,16 +1,16 @@
-use std::{collections::HashMap, fmt::Debug, hash::Hash, ops::{AddAssign, Div}};
+use std::{collections::HashMap, fmt::Debug, ops::Div};
 
 use ark_bls12_381::Fr;
 use ark_ff::Field;
-use ark_relations::{
-  lc, ns, r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError}
-};
-use itertools::Itertools;
-use ark_r1cs_std::{alloc::AllocVar, boolean::Boolean, fields::fp::AllocatedFp, R1CSVar};
-use ark_r1cs_std::eq::EqGadget;
-use ark_r1cs_std::fields::fp::FpVar;
 use ark_ff::Zero;
+use ark_r1cs_std::fields::fp::FpVar;
+use ark_r1cs_std::{boolean::Boolean, fields::fp::AllocatedFp, R1CSVar};
+use ark_relations::{
+  lc,
+  r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError},
+};
 use ark_std::cmp::Ordering::Less;
+use itertools::Itertools;
 
 ///
 /// Produce snark from the computation after scalar and integer transformations.
@@ -73,24 +73,24 @@ impl<F: From<u128>> SourceType<F> {
 }
 
 // We specialize these types for much better discoverability
-type Curve = ark_bls12_381::Bls12_381;
+// type Curve = ark_bls12_381::Bls12_381;
 type CircuitField = ark_bls12_381::Fr;
 
-/// 
-/// NOTE on integer vs float computation: 
-/// 
+///
+/// NOTE on integer vs float computation:
+///
 /// The ML computation is obviously meant to evaluate to floats.
-/// If we were to take the static description of the expression for evaluation, but treat all Op's as if 
-/// they act on integers - then what changes do we need to do to the expression? 
-/// 
+/// If we were to take the static description of the expression for evaluation, but treat all Op's as if
+/// they act on integers - then what changes do we need to do to the expression?
+///
 /// We define a scale factor and use integer `round(scale * f)` to represent a float `f`.
 /// Firstly, we scale the inputs by scale factor.
 /// Addition and  operations are fine as is.
 /// Mul needs to divide the result by scale, sth along the lines for Recip, etc. LessThan probably needs to divide by scale (?).
 /// In the end result is multiplied by scale.
-/// 
+///
 ///  - Recip: n = f * s. 1/f = s/n. So we represent Recip(n) as s^2/n, where / is in F?
-/// 
+///
 /// Q: There is two ways in terms of code structure to implement this.
 ///    We can separate it into a compilation step or we can combine this step with snark synthesis.
 /// Both are fine.
@@ -112,7 +112,10 @@ impl ConstraintSynthesizer<CircuitField> for MLSnark {
   // THIS-WORKS
 
   #[instrument(level = "debug", name = "generate_constraints")]
-  fn generate_constraints(self, cs: ConstraintSystemRef<CircuitField>) -> Result<(), SynthesisError> {
+  fn generate_constraints(
+    self,
+    cs: ConstraintSystemRef<CircuitField>,
+  ) -> Result<(), SynthesisError> {
     let graph = &self.graph.graph;
     let scale = self.scale;
     let scale_F = CircuitField::from(scale as u128);
@@ -153,7 +156,6 @@ impl ConstraintSynthesizer<CircuitField> for MLSnark {
         }
         // UNOP
         else if let Some((((_, _, _), y),)) = incoming.iter().collect_tuple() {
-        
           let yy = vars.get(&y).unwrap().clone();
           let yy_val = assignments.get(&y).unwrap().clone();
 
@@ -161,8 +163,13 @@ impl ConstraintSynthesizer<CircuitField> for MLSnark {
             // we have n = f * scale
             // The inverse is: 1/f = scale/n
             // so its represented by: m = scale * scale / n
-            let ass = yy_val
-              .map(|y| scale_F.square() * y.inverse().unwrap_or_else(|| { warn!("Tried inversing 0. Returning 0"); CircuitField::zero() }));
+            let ass = yy_val.map(|y| {
+              scale_F.square()
+                * y.inverse().unwrap_or_else(|| {
+                  warn!("Tried inversing 0. Returning 0");
+                  CircuitField::zero()
+                })
+            });
             let v = cs.new_witness_variable(|| ass.ok_or(SynthesisError::AssignmentMissing))?;
             cs.enforce_constraint(
               lc!() + yy,
@@ -174,9 +181,8 @@ impl ConstraintSynthesizer<CircuitField> for MLSnark {
             todo!("Unsupported unop!")
           }
         }
-        // BINOP 
+        // BINOP
         else if let Some(((_, l), (_, r))) = incoming.into_iter().collect_tuple() {
-
           // assumes toposort order for unwraps
           let ll = vars.get(&l).unwrap().clone();
           let rr = vars.get(&r).unwrap().clone();
@@ -200,35 +206,30 @@ impl ConstraintSynthesizer<CircuitField> for MLSnark {
             // v * scale == tmp
             let tmp_ass = ll_val
               .and_then(|l| rr_val.map(|r| (l, r)))
-              .map(|(l, r)| l * r );
-            let tmp = cs.new_witness_variable(|| tmp_ass.ok_or(SynthesisError::AssignmentMissing))?;
-            let ass = tmp_ass.map(|x| x.div( scale_F ));
+              .map(|(l, r)| l * r);
+            let tmp =
+              cs.new_witness_variable(|| tmp_ass.ok_or(SynthesisError::AssignmentMissing))?;
+            let ass = tmp_ass.map(|x| x.div(scale_F));
             let v = cs.new_witness_variable(|| ass.ok_or(SynthesisError::AssignmentMissing))?;
-            cs.enforce_constraint(
-              lc!() + ll,
-              lc!() + rr,
-              lc!() + tmp,
-            )?;
+            cs.enforce_constraint(lc!() + ll, lc!() + rr, lc!() + tmp)?;
             cs.enforce_constraint(
               lc!() + v,
               lc!() + (scale_F, ConstraintSystem::<CircuitField>::one()),
               lc!() + tmp,
             )?;
-            (v, ass)     
+            (v, ass)
           } else if graph.check_node_type::<LessThan>(x) {
             // using the interface from r1cs_std here:
             let lll = FpVar::<Fr>::Var(AllocatedFp::new(ll_val, ll, cs.clone()));
             let rrr = FpVar::<Fr>::Var(AllocatedFp::new(ll_val, rr, cs.clone()));
             lll.enforce_cmp(&rrr, Less, false)?;
 
-            let ass = || 
-              lll
-              .is_cmp(&rrr, Less, false)
-              .and_then(|is_cmp| 
+            let ass = || {
+              lll.is_cmp(&rrr, Less, false).and_then(|is_cmp|
                 // !!! so here remember that 1 is scale_F
                 Boolean::<CircuitField>::le_bits_to_fp_var(&vec![is_cmp])?
-                .value().map(|x| x * scale_F)
-              );
+                .value().map(|x| x * scale_F))
+            };
             let ret = cs.new_witness_variable(ass)?;
             (ret, ass().ok())
           } else {

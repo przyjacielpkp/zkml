@@ -10,12 +10,15 @@ use luminal::graph::Graph;
 use std::{collections::HashMap, error::Error, fs::File, io::Write};
 
 use itertools::Itertools;
-use petgraph::{graph::EdgeIndex, visit::{EdgeRef, IntoNodeIdentifiers}, Direction::{Incoming, Outgoing}
+use petgraph::{
+  graph::EdgeIndex,
+  visit::{EdgeRef, IntoNodeIdentifiers},
+  Direction::{Incoming, Outgoing},
 };
 use tracing::{debug, info, instrument, warn};
 
 use luminal::{
-  op::{Constant, ConstantValue, InputTensor, Operator},
+  op::{Constant, InputTensor, Operator},
   prelude::*,
   shape::Shape,
 };
@@ -23,7 +26,7 @@ use luminal::{
 /// Asserts (in non-strictly-typed way) that all input tensors are single values.
 #[derive(Debug)]
 pub struct ScalarGraph {
-  /// Note Graph representation: 
+  /// Note Graph representation:
   ///   Graph is a DAG of the expression defining a tensor computation.
   ///   
   ///   Nodes keep weights signifying operations. You check the weight by type assertions on the node weight.
@@ -31,7 +34,7 @@ pub struct ScalarGraph {
   ///     - records the index in argument list to the operation in the target node
   ///     - records an expression that maps logical tensor indices in the incoming tensor to physical indices in what will be evaluated in source node
   ///     - records the shape (n,) of the physical tensor in what will be evaluated in source node
-  /// 
+  ///
   ///   As we are concerned with a snark computation derived from the graph here,
   ///   we don't care about evaluation step. We are only concerned about rewrites of the static computation graph.
   ///
@@ -105,7 +108,6 @@ impl Operator for ConstantOp {
     panic!("InputOp: We wont be evaluating it either way")
   }
 }
-
 
 // TODO: rewrite to lessthan? treat in snark? ignore?
 #[derive(Debug, Default, Clone)]
@@ -213,13 +215,18 @@ impl Compiler for Scalarize {
 
     /// When looking at node x, already the outgoing edges are created and wired to little circuit created when substituting for nodes previous to x.
     /// This helper connects these edges to <x physical shape> many little nodes.
-    fn connect_out_edges(x: NodeIndex, little_nodes: &Vec<NodeIndex>, edge_src_indices : &HashMap<EdgeIndex, usize>, graph: &mut Graph) {
+    fn connect_out_edges(
+      x: NodeIndex,
+      little_nodes: &Vec<NodeIndex>,
+      edge_src_indices: &HashMap<EdgeIndex, usize>,
+      graph: &mut Graph,
+    ) {
       let out_edges: Vec<_> = graph
         .graph
         .edges_directed(x, Outgoing)
         .filter_map(|e| e.weight().as_data().map(|d| (e.id(), d, e.target())))
         .collect();
-      
+
       for (e, (input_order, output_order, shape), target) in out_edges {
         let logical_index = edge_src_indices[&e];
         // using output_order as the remembered index in logical shape
@@ -283,15 +290,29 @@ impl Compiler for Scalarize {
       little_nodes
     }
 
-    fn reduce_op<T: Operator + 'static + Clone>(op : T, x : NodeIndex, size : usize, ax: usize /* reduce axis */, yy: &(EdgeIndex, (u8, u8, ShapeTracker), NodeIndex) , edge_src_indices: &mut HashMap<EdgeIndex, usize>,graph: &mut Graph) -> Vec<NodeIndex> {
+    fn reduce_op<T: Operator + 'static + Clone>(
+      op: T,
+      x: NodeIndex,
+      size: usize,
+      ax: usize, /* reduce axis */
+      yy: &(EdgeIndex, (u8, u8, ShapeTracker), NodeIndex),
+      edge_src_indices: &mut HashMap<EdgeIndex, usize>,
+      graph: &mut Graph,
+    ) -> Vec<NodeIndex> {
       let (_, (_, from_output, sh), y) = yy;
       let dims = sh.shape_usize();
       let ax_len = dims[ax];
       let front_size = dims.iter().take(ax).product::<usize>().max(1);
       let back_size = dims.iter().skip(ax + 1).product::<usize>().max(1);
-      assert!(ax_len > 1, "Why reducing scalar? but also im lazy to implement that edgecase.");
+      assert!(
+        ax_len > 1,
+        "Why reducing scalar? but also im lazy to implement that edgecase."
+      );
       assert!(*from_output == 0, "Thats not strictly necessary but 1) is always the case 2) is needed for this lazy implementation." );
-      assert!(size == sh.n_elements().to_usize().unwrap() / ax_len, "Expect result size to be the size after collapsing the ax dim.");
+      assert!(
+        size == sh.n_elements().to_usize().unwrap() / ax_len,
+        "Expect result size to be the size after collapsing the ax dim."
+      );
       assert!(size == front_size * back_size);
       let create_reduce_circuit = |i| {
         let front_i = i / front_size;
@@ -302,14 +323,29 @@ impl Compiler for Scalarize {
         });
         xs.fold(*y, |l_node, k| {
           let new = graph.add_op(op.clone()).finish();
-          let _ = graph.add_edge(l_node, new, Dependency::Data { input_order: 0, output_order: 0 /* assuming yy outputs one vector */, shape: R0::to_tracker() });
-          let e_r = graph.add_edge(*y, new, Dependency::Data { input_order: 1, output_order: 0 /* assuming yy outputs one vector */, shape: R0::to_tracker() });
+          let _ = graph.add_edge(
+            l_node,
+            new,
+            Dependency::Data {
+              input_order: 0,
+              output_order: 0, /* assuming yy outputs one vector */
+              shape: R0::to_tracker(),
+            },
+          );
+          let e_r = graph.add_edge(
+            *y,
+            new,
+            Dependency::Data {
+              input_order: 1,
+              output_order: 0, /* assuming yy outputs one vector */
+              shape: R0::to_tracker(),
+            },
+          );
           edge_src_indices.insert(e_r, k); /* recording logical index of a scalar edge */
           new
-          }
-        )
+        })
       };
-      let little_nodes: Vec<NodeIndex> =  (0..size).map(create_reduce_circuit).collect();
+      let little_nodes: Vec<NodeIndex> = (0..size).map(create_reduce_circuit).collect();
       connect_out_edges(x, &little_nodes, &edge_src_indices, graph);
       little_nodes
     }
@@ -323,7 +359,7 @@ impl Compiler for Scalarize {
       .collect::<HashMap<_, _>>();
 
     // when creating an edge targeting a newly made little node we need to remember for what index in the incoming shape it was made
-    let mut edge_src_indices : HashMap<EdgeIndex, usize> = HashMap::new();
+    let mut edge_src_indices: HashMap<EdgeIndex, usize> = HashMap::new();
 
     let pi = {
       let mut pi = petgraph::algo::toposort(&graph.graph, None).unwrap();
@@ -377,16 +413,26 @@ impl Compiler for Scalarize {
           panic!("Unsupported source node type!")
         }
       } else if let Some((yy,)) = incoming.iter().collect_tuple() {
-        if graph.check_node_type::<Recip>(x) { 
+        if graph.check_node_type::<Recip>(x) {
           // same as Add but unop
           // TODO: this works right???
-          pointwise_op( Recip{} , x, size, &incoming, &mut edge_src_indices, graph)     
+          pointwise_op(Recip {}, x, size, &incoming, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<SumReduce>(x) {
-          let ax : &SumReduce = graph.node_weight(x).unwrap().as_any().downcast_ref().unwrap();
-          reduce_op(Add{}, x, size, ax.0, yy, &mut edge_src_indices, graph)
+          let ax: &SumReduce = graph
+            .node_weight(x)
+            .unwrap()
+            .as_any()
+            .downcast_ref()
+            .unwrap();
+          reduce_op(Add {}, x, size, ax.0, yy, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<MaxReduce>(x) {
-          let ax : &MaxReduce = graph.node_weight(x).unwrap().as_any().downcast_ref().unwrap();
-          reduce_op(Max{}, x, size, ax.0, yy, &mut edge_src_indices, graph)
+          let ax: &MaxReduce = graph
+            .node_weight(x)
+            .unwrap()
+            .as_any()
+            .downcast_ref()
+            .unwrap();
+          reduce_op(Max {}, x, size, ax.0, yy, &mut edge_src_indices, graph)
         } else {
           panic!("Unsupported unop OP")
         }
@@ -401,7 +447,14 @@ impl Compiler for Scalarize {
           pointwise_op(Mul {}, x, size, &incoming, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<LessThan>(x) {
           debug!("LessThan {:?} {:?}", ll, rr);
-          pointwise_op(LessThan {}, x, size, &incoming, &mut edge_src_indices, graph)
+          pointwise_op(
+            LessThan {},
+            x,
+            size,
+            &incoming,
+            &mut edge_src_indices,
+            graph,
+          )
         } else {
           todo!("Unsupported yet binop!") // are there any other binops we need?
         }
