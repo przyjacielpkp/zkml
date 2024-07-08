@@ -400,10 +400,10 @@ impl Compiler for Scalarize {
           debug!("Mul {:?} {:?}", ll, rr);
           pointwise_op(Mul {}, x, size, &incoming, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<LessThan>(x) {
-          debug!("Mul {:?} {:?}", ll, rr);
+          debug!("LessThan {:?} {:?}", ll, rr);
           pointwise_op(LessThan {}, x, size, &incoming, &mut edge_src_indices, graph)
         } else {
-          todo!("Unsupported yet binop!") // are there any other binops we need? A: yes, comparisons
+          todo!("Unsupported yet binop!") // are there any other binops we need?
         }
       } else {
         // TODO: error handling
