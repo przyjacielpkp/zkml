@@ -91,6 +91,7 @@ pub fn get_weights(graph: &Graph, model: &Model) -> HashMap<NodeIndex, Vec<f32>>
     .collect()
 }
 
+
 pub fn run_model(dataset: (InputsVec, OutputsVec)) -> (Graph, Model) {
   // Setup gradient graph
   let mut cx = Graph::new();
