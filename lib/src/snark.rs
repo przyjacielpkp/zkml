@@ -1,22 +1,28 @@
-use std::{collections::HashMap, fmt::Debug, hash::Hash};
+use std::{collections::HashMap, fmt::Debug, ops::Div};
 
+use ark_bls12_381::Fr;
 use ark_ff::Field;
+use ark_ff::Zero;
+use ark_r1cs_std::fields::fp::FpVar;
+use ark_r1cs_std::{boolean::Boolean, fields::fp::AllocatedFp, R1CSVar};
 use ark_relations::{
   lc,
   r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError},
 };
+use ark_std::cmp::Ordering::Less;
 use itertools::Itertools;
+
 ///
 /// Produce snark from the computation after scalar and integer transformations.
 ///
 use luminal::{
-  op::Add,
+  op::{Add, LessThan, Mul, Recip},
   prelude::{
     petgraph::{self, visit::EdgeRef, Direction::Incoming},
     NodeIndex,
   },
 };
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 use crate::scalar::{InputsTracker, ScalarGraph};
 
@@ -66,25 +72,25 @@ impl<F: From<u128>> SourceType<F> {
   }
 }
 
-#[derive(Debug)]
-pub struct MLSnark {
-  pub graph: ScalarGraph,
-  pub scale: usize,
-  pub private_inputs: HashMap<NodeIndex, Option<Vec<f32>>>,
-}
+// We specialize these types for much better discoverability
+// type Curve = ark_bls12_381::Bls12_381;
+type CircuitField = ark_bls12_381::Fr;
 
-/// NOTE on integer vs float computation: 
-/// 
+///
+/// NOTE on integer vs float computation:
+///
 /// The ML computation is obviously meant to evaluate to floats.
-/// If we were to take the static description of the expression for evaluation, but treat all Op's as if 
-/// they act on integers - then what changes do we need to do to the expression? 
-/// 
+/// If we were to take the static description of the expression for evaluation, but treat all Op's as if
+/// they act on integers - then what changes do we need to do to the expression?
+///
 /// We define a scale factor and use integer `round(scale * f)` to represent a float `f`.
 /// Firstly, we scale the inputs by scale factor.
 /// Addition and  operations are fine as is.
 /// Mul needs to divide the result by scale, sth along the lines for Recip, etc. LessThan probably needs to divide by scale (?).
 /// In the end result is multiplied by scale.
-/// 
+///
+///  - Recip: n = f * s. 1/f = s/n. So we represent Recip(n) as s^2/n, where / is in F?
+///
 /// Q: There is two ways in terms of code structure to implement this.
 ///    We can separate it into a compilation step or we can combine this step with snark synthesis.
 /// Both are fine.
@@ -95,13 +101,24 @@ pub struct MLSnark {
 /// If doing a seperate integer step we'd say: Mul_float a b => (Div_int scale (Mul_int a' b'))
 /// and then snark synthesis would rewrite Div_int to a similar circuit as above.
 ///
+#[derive(Debug)]
+pub struct MLSnark {
+  pub graph: ScalarGraph,
+  pub scale: usize,
+  pub private_inputs: HashMap<NodeIndex, Option<Vec<f32>>>,
+}
 
-impl<F: Field> ConstraintSynthesizer<F> for MLSnark {
+impl ConstraintSynthesizer<CircuitField> for MLSnark {
   // THIS-WORKS
 
   #[instrument(level = "debug", name = "generate_constraints")]
-  fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+  fn generate_constraints(
+    self,
+    cs: ConstraintSystemRef<CircuitField>,
+  ) -> Result<(), SynthesisError> {
     let graph = &self.graph.graph;
+    let scale = self.scale;
+    let scale_F = CircuitField::from(scale as u128);
     let source_map =
       snark_input_mapping(self.private_inputs, self.scale, self.graph.inputs_tracker);
 
@@ -110,7 +127,7 @@ impl<F: Field> ConstraintSynthesizer<F> for MLSnark {
     // would actaully want:
     // let mut assignments: HashMap<NodeIndex, Box<dyn Fn()-> Result<F, SynthesisError>> > = HashMap::new();
     // but the below is easier to manage ownership with
-    let mut assignments: HashMap<NodeIndex, Option<F>> = HashMap::new();
+    let mut assignments: HashMap<NodeIndex, Option<CircuitField>> = HashMap::new();
     // ^ thats silly that we need to track assignments but thats really because of the low level nature of arkworks api
 
     for x in pi {
@@ -122,50 +139,108 @@ impl<F: Field> ConstraintSynthesizer<F> for MLSnark {
         .sorted_by_key(|((inp, _, _), _)| *inp)
         .collect();
 
-      // x is source
-      if incoming.is_empty() {
-        let src_ty = source_map
-          .get(&x)
-          .unwrap_or_else(|| panic!("Unknown source node {:?}!", x));
-        use SourceType::*;
-        let (v, ass) = match src_ty {
-          Private(mn) => (
-            cs.new_witness_variable(|| mn.ok_or(SynthesisError::AssignmentMissing))?,
-            mn.clone(),
-          ),
-          Public(n) => (cs.new_input_variable(|| Ok(*n))?, Some(*n)),
-        };
-        vars.insert(x, v);
-        assignments.insert(x, ass);
-      } else if let Some((((_, _, _), x),)) = incoming.iter().collect_tuple() {
-        todo!("Unop")
-      }
-      // x is binop
-      else if let Some(((_, l), (_, r))) = incoming.into_iter().collect_tuple() {
-        // assumes toposort order for unwraps
-        let ll = vars.get(&l).unwrap().clone();
-        let rr = vars.get(&r).unwrap().clone();
-        let ll_val = assignments.get(&l).unwrap().clone();
-        let rr_val = assignments.get(&r).unwrap().clone();
+      let (v, ass) = {
+        // SOURCE
+        if incoming.is_empty() {
+          let src_ty = source_map
+            .get(&x)
+            .unwrap_or_else(|| panic!("Unknown source node {:?}!", x));
+          use SourceType::*;
+          match src_ty {
+            Private(mn) => (
+              cs.new_witness_variable(|| mn.ok_or(SynthesisError::AssignmentMissing))?,
+              mn.clone(),
+            ),
+            Public(n) => (cs.new_input_variable(|| Ok(*n))?, Some(*n)),
+          }
+        }
+        // UNOP
+        else if let Some((((_, _, _), y),)) = incoming.iter().collect_tuple() {
+          let yy = vars.get(&y).unwrap().clone();
+          let yy_val = assignments.get(&y).unwrap().clone();
 
-        let (v, ass) = if graph.check_node_type::<Add>(x) {
-          // how nice would it be to do: (,) <*> ll_val <$> rr_val
-          let ass = ll_val
-            .and_then(|l| rr_val.map(|r| (l, r)))
-            .map(|(l, r)| l + r);
-          let v = cs.new_witness_variable(|| ass.ok_or(SynthesisError::AssignmentMissing))?;
-          cs.enforce_constraint(
-            lc!() + ll + rr,
-            lc!() + ConstraintSystem::<F>::one(),
-            lc!() + v,
-          )?; // ll + rr s== v
-          (v, ass)
+          if graph.check_node_type::<Recip>(x) {
+            // we have n = f * scale
+            // The inverse is: 1/f = scale/n
+            // so its represented by: m = scale * scale / n
+            let ass = yy_val.map(|y| {
+              scale_F.square()
+                * y.inverse().unwrap_or_else(|| {
+                  warn!("Tried inversing 0. Returning 0");
+                  CircuitField::zero()
+                })
+            });
+            let v = cs.new_witness_variable(|| ass.ok_or(SynthesisError::AssignmentMissing))?;
+            cs.enforce_constraint(
+              lc!() + yy,
+              lc!() + v,
+              lc!() + (scale_F * scale_F, ConstraintSystem::<CircuitField>::one()),
+            )?; // m * n == scale * scale
+            (v, ass)
+          } else {
+            todo!("Unsupported unop!")
+          }
+        }
+        // BINOP
+        else if let Some(((_, l), (_, r))) = incoming.into_iter().collect_tuple() {
+          // assumes toposort order for unwraps
+          let ll = vars.get(&l).unwrap().clone();
+          let rr = vars.get(&r).unwrap().clone();
+          let ll_val = assignments.get(&l).unwrap().clone();
+          let rr_val = assignments.get(&r).unwrap().clone();
+
+          if graph.check_node_type::<Add>(x) {
+            // how nice would it be to do: (,) <*> ll_val <$> rr_val
+            let ass = ll_val
+              .and_then(|l| rr_val.map(|r| (l, r)))
+              .map(|(l, r)| l + r);
+            let v = cs.new_witness_variable(|| ass.ok_or(SynthesisError::AssignmentMissing))?;
+            cs.enforce_constraint(
+              lc!() + ll + rr,
+              lc!() + ConstraintSystem::<CircuitField>::one(),
+              lc!() + v,
+            )?; // ll + rr == v
+            (v, ass)
+          } else if graph.check_node_type::<Mul>(x) {
+            // ll * rr == tmp
+            // v * scale == tmp
+            let tmp_ass = ll_val
+              .and_then(|l| rr_val.map(|r| (l, r)))
+              .map(|(l, r)| l * r);
+            let tmp =
+              cs.new_witness_variable(|| tmp_ass.ok_or(SynthesisError::AssignmentMissing))?;
+            let ass = tmp_ass.map(|x| x.div(scale_F));
+            let v = cs.new_witness_variable(|| ass.ok_or(SynthesisError::AssignmentMissing))?;
+            cs.enforce_constraint(lc!() + ll, lc!() + rr, lc!() + tmp)?;
+            cs.enforce_constraint(
+              lc!() + v,
+              lc!() + (scale_F, ConstraintSystem::<CircuitField>::one()),
+              lc!() + tmp,
+            )?;
+            (v, ass)
+          } else if graph.check_node_type::<LessThan>(x) {
+            // using the interface from r1cs_std here:
+            let lll = FpVar::<Fr>::Var(AllocatedFp::new(ll_val, ll, cs.clone()));
+            let rrr = FpVar::<Fr>::Var(AllocatedFp::new(ll_val, rr, cs.clone()));
+            lll.enforce_cmp(&rrr, Less, false)?;
+
+            let ass = || {
+              lll.is_cmp(&rrr, Less, false).and_then(|is_cmp|
+                // !!! so here remember that 1 is scale_F
+                Boolean::<CircuitField>::le_bits_to_fp_var(&vec![is_cmp])?
+                .value().map(|x| x * scale_F))
+            };
+            let ret = cs.new_witness_variable(ass)?;
+            (ret, ass().ok())
+          } else {
+            panic!("Unsupported binop")
+          }
         } else {
-          todo!("Unsupported binops other than Add")
-        };
-        vars.insert(x, v);
-        assignments.insert(x, ass);
-      }
+          panic!("No n-ary ops for n>2")
+        }
+      };
+      vars.insert(x, v);
+      assignments.insert(x, ass);
     }
     Ok(())
   }
