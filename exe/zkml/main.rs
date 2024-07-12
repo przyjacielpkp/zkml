@@ -27,7 +27,7 @@ enum Command {
     #[arg(short, long, default_value_t = 4545)]
     port: u16,
   },
-  Model {
+  Setup {
     #[arg(long)]
     dataset_path: PathBuf,
     #[arg(long)]
@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
       let app = subcommands::Server::new(port);
       app.run().await;
     }
-    Command::Model {
+    Command::Setup {
       dataset_path,
       prover_output_path,
       verifier_output_path,
