@@ -1,5 +1,6 @@
 use std::{collections::HashMap, convert::TryInto, fs, iter::zip, ops::Deref, path::Path};
 
+use dfdx::shapes::Const;
 use luminal::prelude::*;
 use luminal_nn::{Linear, ReLU};
 use luminal_training::{mse_loss, sgd_on_graph, Autograd};
@@ -89,6 +90,19 @@ pub fn get_weights(graph: &Graph, model: &Model) -> HashMap<NodeIndex, Vec<f32>>
       )
     })
     .collect()
+}
+
+pub fn get_accuracy(cx: &mut Graph, input: GraphTensor<R1<9>>, output: GraphTensor<R1<1>>, X: &InputsVec, y: &OutputsVec ) -> f32{
+  let mut cnt: u32 = 0;
+  for (x, ans) in zip(X, y){
+    input.set(x.to_owned());
+    cx.execute();
+    if output.data()[0] == ans.to_owned(){
+      cnt+=1;
+    }
+    output.drop();
+  } 
+  cnt as f32 / y.len() as f32
 }
 
 pub fn run_model(dataset: (InputsVec, OutputsVec)) -> (Graph, Model) {
