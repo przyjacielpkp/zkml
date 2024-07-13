@@ -1,8 +1,9 @@
-use std::{collections::HashMap, convert::TryInto, fs, iter::zip, ops::Deref, path::Path};
+use std::{any::Any, collections::HashMap, convert::TryInto, fs::{self, File}, iter::zip, ops::Deref, path::Path};
 
 use luminal::prelude::*;
 use luminal_nn::{Linear, ReLU};
 use luminal_training::{mse_loss, sgd_on_graph, Autograd};
+use petgraph::visit::{EdgeRef, IntoEdgeReferences, IntoNodeReferences};
 
 const FILE_PATH: &str = "data/rp.data";
 
@@ -13,11 +14,13 @@ pub type Model = (Linear<9, 16>, ReLU, Linear<16, 16>, ReLU, Linear<16, 1>);
 
 pub fn read_dataset(path: &Path) -> (InputsVec, OutputsVec) {
   let content: Vec<String> = fs::read_to_string(path)
+    // todo: error handling
     .unwrap()
     .lines()
     .map(String::from)
     .collect();
 
+  // todo: why no csv?
   let mut x: InputsVec = Vec::new();
   let mut y: OutputsVec = Vec::new();
   for line in content {
@@ -91,8 +94,25 @@ pub fn get_weights(graph: &Graph, model: &Model) -> HashMap<NodeIndex, Vec<f32>>
     .collect()
 }
 
+pub struct TrainParams {
+  pub data: (InputsVec, OutputsVec),
+  // pub output: PathBuf,
+  pub epochs: usize,
+  // pub lr: f32,
+  // pub batch_size: u32,
+  // pub model: Model,
+}
 
-pub fn run_model(dataset: (InputsVec, OutputsVec)) -> (Graph, Model) {
+pub struct TrainedGraph {
+  pub graph: Graph,
+  pub input_id: NodeIndex,
+  pub weights: Vec<(NodeIndex, Vec<f32>)>,
+  // pub model: Model,
+}
+
+pub fn run_model(train_params : TrainParams) -> (Graph, Model, TrainedGraph) {
+  let dataset: (InputsVec, OutputsVec) = train_params.data;
+  let EPOCHS = train_params.epochs;
   // Setup gradient graph
   let mut cx = Graph::new();
   let model = <Model>::initialize(&mut cx);
@@ -102,6 +122,10 @@ pub fn run_model(dataset: (InputsVec, OutputsVec)) -> (Graph, Model) {
   let mut loss = mse_loss(output, target).retrieve();
 
   let mut weights = params(&model);
+  cx.display();
+  // record graph without gradients. assuming nodeids dont change in Autograd::compile
+  let cx_og = copy_graph_roughly(&cx);
+
   let grads = cx.compile(Autograd::new(&weights, loss), ());
   let (mut new_weights, lr) = sgd_on_graph(&mut cx, &weights, &grads);
   cx.keep_tensors(&new_weights);
@@ -123,7 +147,7 @@ pub fn run_model(dataset: (InputsVec, OutputsVec)) -> (Graph, Model) {
 
   let (mut loss_avg, mut acc_avg) = (ExponentialAverage::new(1.0), ExponentialAverage::new(0.0));
   let start = std::time::Instant::now();
-  let EPOCHS = 20;
+  // let EPOCHS = 20;
 
   let (X, Y) = dataset;
   let (X_train, X_test, y_train, y_test) = split_dataset(X, Y, 0.8);
@@ -162,7 +186,20 @@ pub fn run_model(dataset: (InputsVec, OutputsVec)) -> (Graph, Model) {
     start.elapsed().as_secs_f32(),
     start.elapsed().as_micros() / iter
   );
-  (cx, model)
+  cx.display();
+  let weights_vec = weights
+    .into_iter().map(|a| (a, 
+      cx.tensors.get(&(a, 0 /* assuming single output */)).unwrap().downcast_ref::<Vec<f32>>().unwrap().clone().into_iter().collect()
+    )).collect()
+  ;
+  (cx, model, 
+    TrainedGraph { 
+      graph : cx_og,
+      input_id : input.id, 
+      weights : weights_vec,
+      // model: model.clone()
+    }  
+  )
 }
 
 pub struct ExponentialAverage {
@@ -196,4 +233,37 @@ impl ExponentialAverage {
     self.value = 0.0;
     self.t = 0;
   }
+}
+
+// copies things that are relevant. very much not exact copy
+pub fn copy_graph_roughly(src: &Graph) -> Graph {
+  let mut g = Graph::new();
+  let mut map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+  for x in src.node_indices() {
+    let n = if src.check_node_type::<Add>(x) {
+      g.add_op(Add{}).finish()
+    } else if src.check_node_type::<Mul>(x) {
+      g.add_op(Mul{}).finish()
+    } else if src.check_node_type::<Function>(x) {
+      g.add_op(Function("Load".to_string(), Box::new(|_| panic!("dont run")))).finish()
+    } else if src.check_node_type::<Recip>(x) {
+      g.add_op(Recip{}).finish()
+    } else if src.check_node_type::<MaxReduce>(x) {
+      let op = src.get_op::<MaxReduce>(x);
+      g.add_op(MaxReduce(op.0)).finish()
+    } else if src.check_node_type::<SumReduce>(x) {
+      let op = src.get_op::<SumReduce>(x);
+      g.add_op(SumReduce(op.0)).finish()
+    } else if src.check_node_type::<Constant>(x) {
+      let op = src.get_op::<Constant>(x);
+      g.add_op(Constant(op.0.clone(), op.1)).finish()
+    } else {
+      panic!("Unknown node type")
+    };
+    map.insert(x, n);
+  }
+  for e in src.edge_references() {
+    g.add_edge(e.source(), e.target(), e.weight().clone());
+  }
+  g
 }

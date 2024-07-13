@@ -1,16 +1,24 @@
 use std::{collections::HashMap, fmt::Debug, ops::Div};
 
+use ark_bls12_381::Bls12_381;
 use ark_bls12_381::Fr;
 use ark_ff::Field;
 use ark_ff::Zero;
+use ark_groth16::Groth16;
+use ark_groth16::ProvingKey;
+use ark_groth16::VerifyingKey;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::{boolean::Boolean, fields::fp::AllocatedFp, R1CSVar};
 use ark_relations::{
   lc,
   r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError},
 };
+use ark_snark::SNARK;
 use ark_std::cmp::Ordering::Less;
 use itertools::Itertools;
+use ark_bls12_381::{Fr as BlsFr};
+// use ark_groth16::Groth16;
+// use ark_snark::SNARK;
 
 ///
 /// Produce snark from the computation after scalar and integer transformations.
@@ -24,6 +32,7 @@ use luminal::{
 };
 use tracing::{info, instrument, warn};
 
+use crate::model::copy_graph_roughly;
 use crate::scalar::{InputsTracker, ScalarGraph};
 
 /// Tensor computation is initialized by setting input tensors data and then evaluating.
@@ -55,7 +64,7 @@ pub fn snark_input_mapping<F: From<u128>>(
   result
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SourceType<F> {
   Private(Option<F>),
   Public(F),
@@ -103,9 +112,51 @@ pub type CircuitField = ark_bls12_381::Fr;
 #[derive(Debug)]
 pub struct MLSnark {
   pub graph: ScalarGraph,
+  // start here
   pub scale: usize,
-  pub private_inputs: HashMap<NodeIndex, Option<Vec<f32>>>,
+  // pub private_inputs: HashMap<NodeIndex, Option<Vec<f32>>>,
+  pub source_map: HashMap<NodeIndex, SourceType<f32>>,
+  // for convenience
+  pub og_input_id : NodeIndex,
+  // pub inputs_tracker : InputsTracker
 }
+
+pub type SourceMap = HashMap<NodeIndex, SourceType<f32>>;
+
+impl MLSnark {
+  pub fn set_input(&mut self, value : Vec<f32>) {
+    set_input(&mut self.source_map, &self.graph.inputs_tracker, self.og_input_id, value)
+  }
+
+  pub fn make_keys(&self) ->
+    Result<
+        (ProvingKey<Bls12_381>, 
+        VerifyingKey<Bls12_381>), 
+      SynthesisError> {
+    let cloned = MLSnark {
+      graph : self.graph.copy_graph_roughly(),
+      scale : self.scale,
+      source_map : self.source_map.clone(),
+      og_input_id: self.og_input_id
+    };
+    let rng = &mut ark_std::test_rng();
+    // generate the setup parameters
+    Groth16::<Bls12_381>::circuit_specific_setup(
+      cloned,
+      rng,
+    )
+  }
+
+  // pub fn make_proof
+
+}
+
+fn set_input( source_map : &mut SourceMap, tracker : &InputsTracker, id: NodeIndex, value : Vec<f32>) {
+  let little_ids = tracker.new_inputs.get(&id).unwrap_or_else( || panic!("Wrong id") );
+  for (little_id, v) in little_ids.into_iter().zip(value) {
+    source_map.insert(*little_id, SourceType::Private(Some(v)));
+  }
+} 
 
 impl ConstraintSynthesizer<CircuitField> for MLSnark {
   // THIS-WORKS
@@ -118,8 +169,18 @@ impl ConstraintSynthesizer<CircuitField> for MLSnark {
     let graph = &self.graph.graph;
     let scale = self.scale;
     let scale_F = CircuitField::from(scale as u128);
-    let source_map =
-      snark_input_mapping(self.private_inputs, self.scale, self.graph.inputs_tracker);
+    let source_map: HashMap<NodeIndex, SourceType<CircuitField>> =
+      self.source_map.into_iter().map(|(k, v)| {
+        let v = match v {
+          SourceType::Private(Some(x)) => SourceType::scaled_private(x, scale),
+          SourceType::Private(None) => SourceType::Private(None),
+          SourceType::Public(x) => SourceType::scaled_public(x, scale),
+        };
+        (k, v)
+      })
+      .collect()
+    ;
+      // snark_input_mapping(self.private_inputs, self.scale, self.graph.inputs_tracker);
 
     let pi = petgraph::algo::toposort(&graph.graph, None).unwrap();
     let mut vars: HashMap<NodeIndex, ark_relations::r1cs::Variable> = HashMap::new();

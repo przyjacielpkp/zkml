@@ -1,7 +1,8 @@
 use lib::*;
 
 use clap::{Parser, Subcommand};
-use std::{error::Error, path::PathBuf};
+use model::{read_dataset, TrainParams};
+use std::{error::Error, path::{Path, PathBuf}};
 
 #[derive(Parser)]
 struct Cli {
@@ -27,7 +28,12 @@ enum Command {
     #[arg(short, long, default_value_t = 4545)]
     port: u16,
   },
-  Model {},
+  Model {
+    #[arg(short, long, value_name = "PATH")]
+    data: PathBuf,
+    #[arg(short, long, value_name = "INT", default_value_t = 20)]
+    epochs: usize,
+  },
 }
 
 #[tokio::main]
@@ -49,8 +55,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
       let app = subcommands::Server::new(port);
       app.run().await;
     }
-    Command::Model {} => {
-      lib::model::run_model();
+    Command::Model { data, epochs } => {
+      let ds = read_dataset(Path::new(&data));
+      lib::model::run_model(TrainParams { data: ds, epochs });
     }
   }
   Ok(())
