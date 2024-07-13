@@ -23,6 +23,8 @@ use luminal::{
   shape::Shape,
 };
 
+use crate::model::copy_graph_roughly;
+
 /// Asserts (in non-strictly-typed way) that all input tensors are single values.
 #[derive(Debug)]
 pub struct ScalarGraph {
@@ -42,6 +44,15 @@ pub struct ScalarGraph {
   pub graph: Graph,
   /// In the rewrite to scalar we substitute nodes for multiple nodes, here's a mapping tracking that.
   pub inputs_tracker: InputsTracker,
+}
+
+impl ScalarGraph {
+  pub fn copy_graph_roughly(&self) -> Self {
+    ScalarGraph {
+      graph : copy_graph_roughly(&self.graph),
+      inputs_tracker : self.inputs_tracker.clone()
+    }
+  }
 }
 
 /// Rewrite the static tensor computation to scalar computation.
@@ -119,7 +130,7 @@ impl Operator for Max {
   }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 /// Remembers how to supply inputs to scalar graph to match inputs to tensor graph.
 /// Tracks inputs and constant.
 pub struct InputsTracker {

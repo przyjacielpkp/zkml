@@ -36,6 +36,8 @@ enum Command {
     verifier_output_path: PathBuf,
     #[arg(long)]
     weights_output_path: PathBuf,
+    #[arg(short, long, value_name = "INT", default_value_t = 20)]
+    epochs: usize,
   },
 }
 
@@ -63,12 +65,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
       prover_output_path,
       verifier_output_path,
       weights_output_path,
+      epochs,
     } => {
       let app = subcommands::Setup::new(
         &dataset_path,
         &prover_output_path,
         &verifier_output_path,
         &weights_output_path,
+        epochs,
       );
       app.run();
     }

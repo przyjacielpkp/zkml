@@ -8,10 +8,10 @@ use ark_snark::SNARK;
 use luminal::compiler_utils::ToId;
 use rand::{rngs::StdRng, SeedableRng};
 
-use crate::snark::Curve;
+use crate::{model::TrainingParams, snark::Curve};
 
 pub struct Setup {
-  dataset_path: PathBuf,
+    training_params: TrainingParams,
   prover_output_path: PathBuf,
   verifier_output_path: PathBuf,
   weights_output_path: PathBuf,
@@ -23,9 +23,10 @@ impl Setup {
     prover_output_path: &Path,
     verifier_output_path: &Path,
     weights_output_path: &Path,
+    epochs: usize,
   ) -> Self {
     Self {
-      dataset_path: PathBuf::from(dataset_path),
+            training_params: TrainingParams { data: crate::model::read_dataset(dataset_path), epochs},
       prover_output_path: PathBuf::from(prover_output_path),
       verifier_output_path: PathBuf::from(verifier_output_path),
       weights_output_path: PathBuf::from(weights_output_path),
@@ -35,10 +36,9 @@ impl Setup {
   pub fn run(self) {
     let rng = StdRng::seed_from_u64(1);
 
-    let dataset = crate::model::read_dataset(self.dataset_path.as_path());
-    let (graph, model) = crate::model::run_model(dataset);
+    let trained_graph = crate::model::run_model(self.training_params);
 
-    let weights : HashMap::<_,_> = crate::model::get_weights(&graph, &model).iter().map(|(key, val)| 
+    let weights : HashMap::<_,_> = trained_graph.weights.iter().map(|(key, val)| 
             // the only way to get contents of node index
             (std::format!("{:?}", key).clone(), val.clone())
         ).collect();
@@ -46,11 +46,10 @@ impl Setup {
     // TODO: replace ... with proper object, so that weights will be treated as the private input,
     // then, the following lines can be uncommented
     /*let circuit = crate::lib::compile(...);
-
-    let (pk, vk) = Groth16::<Curve>::circuit_specific_setup(circuit, &mut rng).unwrap();
+    // let (pk, vk) = Groth16::<Curve>::circuit_specific_setup(circuit, &mut rng).unwrap();
 
     crate::utils::canonical_serialize_to_file(&self.prover_output_path, &pk);
     crate::utils::canonical_serialize_to_file(&self.verifier_output_path, &vk);*/
-    crate::utils::serialize_to_file(&self.weights_output_path, &weights);
+    crate::utils::serialize_to_file(&self.weights_output_path,&weights);
   }
 }
