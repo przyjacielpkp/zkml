@@ -1,13 +1,32 @@
-use axum::{routing::get, Router};
+use std::{collections::HashMap, path::Path};
 
+use ark_groth16::r1cs_to_qap::LibsnarkReduction;
+use ark_groth16::{Groth16, VerifyingKey};
+use ark_snark::SNARK;
+use axum::{routing::get, Router};
+use luminal::prelude::NodeIndex;
+
+#[derive()]
 pub struct Server {
   port: u16,
+  verifying_key: VerifyingKey<crate::snark::Curve>,
+  weights: HashMap<NodeIndex, Vec<f32>>,
 }
 
 impl Server {
-  #[allow(clippy::new_without_default)]
-  pub fn new(port: u16) -> Self {
-    Self { port }
+  pub fn new(port: u16, weights_path: &Path, verifying_key_path: &Path) -> Self {
+    let verifying_key = crate::utils::canonical_deserialize_from_file(verifying_key_path);
+
+    let weights = crate::utils::deserialize_from_file::<HashMap<u32, Vec<f32>>>(weights_path)
+      .iter()
+      .map(|(key, val)| (NodeIndex::from(key.clone()), val.clone()))
+      .collect();
+
+    Self {
+      port,
+      verifying_key,
+      weights,
+    }
   }
 
   pub async fn run(self) {
@@ -21,8 +40,7 @@ impl Server {
   }
 
   async fn handle_request(input: String) -> String {
-    todo!("Verification not implemented");
-    let verified = input.is_empty();
+    let verified = Groth16::<_>::verify(&self.verifying_key, &self.weights, &proof).unwrap();
     serde_json::to_string(&verified).unwrap()
   }
 }

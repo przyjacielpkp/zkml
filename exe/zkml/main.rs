@@ -15,7 +15,13 @@ enum Command {
   Client {
     /// File with input to be classified
     #[arg(long, value_name = "PATH")]
-    input_file: PathBuf,
+    input: PathBuf,
+    /// File with proving key
+    #[arg(long, default_value = "pk.in")]
+    proving_key: PathBuf,
+    /// File with neural network weights
+    #[arg(long, default_value = "weights.in")]
+    weights: PathBuf,
     /// URL of verifier
     #[arg(long)]
     url: String,
@@ -24,18 +30,29 @@ enum Command {
   },
   /// ZKML verifier
   Server {
+    /// Port to run server on
     #[arg(short, long, default_value_t = 4545)]
     port: u16,
+    /// File with neural network weights
+    #[arg(long, default_value = "weights.in")]
+    weights: PathBuf,
+    /// File with verifying key
+    #[arg(long, default_value = "vk.in")]
+    verifying_key: PathBuf,
   },
   Setup {
+    /// Input file with dataset
     #[arg(long)]
-    dataset_path: PathBuf,
-    #[arg(long)]
-    prover_output_path: PathBuf,
-    #[arg(long)]
-    verifier_output_path: PathBuf,
-    #[arg(long)]
-    weights_output_path: PathBuf,
+    dataset: PathBuf,
+    /// File to save proving key in
+    #[arg(long, default_value = "pk.in")]
+    proving_key: PathBuf,
+    /// File to save verifying key in
+    #[arg(long, default_value = "vk.in")]
+    verifying_key: PathBuf,
+    /// File to save weights in
+    #[arg(long, default_value = "weights.in")]
+    weights: PathBuf,
   },
 }
 
@@ -46,30 +63,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
   match args.command {
     Command::Client {
-      input_file,
+      input,
+      proving_key,
+      weights,
       url,
       port,
     } => {
       let true_url = format!("https://{}:{}/", url, port);
-      let app = subcommands::Client::new(input_file, true_url);
+      let app = subcommands::Client::new(input, proving_key, weights, true_url);
       app.run().await;
     }
-    Command::Server { port } => {
-      let app = subcommands::Server::new(port);
+    Command::Server {
+      port,
+      weights,
+      verifying_key,
+    } => {
+      let app = subcommands::Server::new(port, weights, verifying_key);
       app.run().await;
     }
     Command::Setup {
-      dataset_path,
-      prover_output_path,
-      verifier_output_path,
-      weights_output_path,
+      dataset,
+      proving_key,
+      verifying_key,
+      weights,
     } => {
-      let app = subcommands::Setup::new(
-        &dataset_path,
-        &prover_output_path,
-        &verifier_output_path,
-        &weights_output_path,
-      );
+      let app = subcommands::Setup::new(&dataset, &proving_key, &verifying_key, &weights);
       app.run();
     }
   }

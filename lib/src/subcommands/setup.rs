@@ -1,5 +1,7 @@
 use std::{
-  collections::HashMap, fs::File, path::{Path, PathBuf}
+  collections::HashMap,
+  fs::File,
+  path::{Path, PathBuf},
 };
 
 use ark_groth16::Groth16;
@@ -38,12 +40,12 @@ impl Setup {
     let dataset = crate::model::read_dataset(self.dataset_path.as_path());
     let (graph, model) = crate::model::run_model(dataset);
 
-    let weights : HashMap::<_,_> = crate::model::get_weights(&graph, &model).iter().map(|(key, val)| 
-            // the only way to get contents of node index
-            (std::format!("{:?}", key).clone(), val.clone())
-        ).collect();
+    let weights: HashMap<_, _> = crate::model::get_weights(&graph, &model)
+      .iter()
+      .map(|(key, val)| (crate::utils::unpack_node_index(key.clone()), val.clone()))
+      .collect();
 
-    // TODO: replace ... with proper object, so that weights will be treated as the private input,
+    // TODO: replace ... with proper object, so that weights will be treated as the public input,
     // then, the following lines can be uncommented
     /*let circuit = crate::lib::compile(...);
 
