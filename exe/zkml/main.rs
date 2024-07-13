@@ -27,7 +27,16 @@ enum Command {
     #[arg(short, long, default_value_t = 4545)]
     port: u16,
   },
-  Model {},
+  Setup {
+    #[arg(long)]
+    dataset_path: PathBuf,
+    #[arg(long)]
+    prover_output_path: PathBuf,
+    #[arg(long)]
+    verifier_output_path: PathBuf,
+    #[arg(long)]
+    weights_output_path: PathBuf,
+  },
 }
 
 #[tokio::main]
@@ -49,8 +58,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
       let app = subcommands::Server::new(port);
       app.run().await;
     }
-    Command::Model {} => {
-      lib::model::run_model();
+    Command::Setup {
+      dataset_path,
+      prover_output_path,
+      verifier_output_path,
+      weights_output_path,
+    } => {
+      let app = subcommands::Setup::new(
+        &dataset_path,
+        &prover_output_path,
+        &verifier_output_path,
+        &weights_output_path,
+      );
+      app.run();
     }
   }
   Ok(())

@@ -1,3 +1,7 @@
+use ark_serialize::{CanonicalSerialize, Write};
+use serde::Serialize;
+use std::path::Path;
+
 #[cfg(not(debug_assertions))]
 use human_panic::setup_panic;
 use tracing::subscriber::{self, SetGlobalDefaultError};
@@ -5,7 +9,7 @@ use tracing::subscriber::{self, SetGlobalDefaultError};
 #[cfg(debug_assertions)]
 extern crate better_panic;
 
-use tracing_subscriber::{self, fmt, layer::SubscriberExt};
+use tracing_subscriber::{self, fmt};
 
 // [NOTE] tracing
 //
@@ -58,4 +62,29 @@ pub fn init_logging() -> Result<(), SetGlobalDefaultError> {
   install_logger()?;
 
   Ok(())
+}
+
+pub fn canonical_serialize_to_file<T: CanonicalSerialize>(path: &Path, obj: &T) {
+  let mut buff = Vec::<u8>::new();
+  obj.serialize(&mut buff);
+
+  if let Err(e) = std::fs::write(path, buff) {
+    panic!(
+      "Error creating file {}: {}",
+      path.to_str().unwrap(),
+      e.to_string()
+    );
+  };
+}
+
+pub fn serialize_to_file<T: Serialize>(path: &Path, obj: &T) {
+  let buff = serde_json::to_string(obj).unwrap();
+
+  if let Err(e) = std::fs::write(path, buff) {
+    panic!(
+      "Error creating file {}: {}",
+      path.to_str().unwrap(),
+      e.to_string()
+    );
+  };
 }

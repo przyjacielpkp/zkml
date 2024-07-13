@@ -1,3 +1,11 @@
+use std::collections::HashMap;
+
+use itertools::Itertools;
+use luminal::prelude::NodeIndex;
+use model::{get_weights, Model};
+use snark::MLSnark;
+use scalar::scalar;
+
 // #![feature(ascii_char)]
 //
 // use std::collections::HashMap;
@@ -13,18 +21,21 @@ pub mod scalar;
 pub mod snark;
 pub mod utils;
 
-//
-// /// Main crate export. Take a tensor computation and rewrite to snark.
-// pub fn compile<F>(c: luminal::graph::Graph) -> MLSnark<F> {
-//   // TODO: BIG TODO: care about source map, need to record it from the beginning.
-//   // TODO: not mutate c
-//   let sc = scalar(c);
-//   MLSnark {
-//     graph: sc,
-//     source_nodes_map: HashMap::new(),
-//   }
-// }
-//
+
+/// Main crate export. Take a tensor computation and rewrite to snark.
+pub fn compile<F>(c: luminal::graph::Graph, m: Model) -> MLSnark {
+  // TODO: BIG TODO: care about source map, need to record it from the beginning.
+  // TODO: not mutate c
+  let weights = model::get_weights(&c, &m);
+  let weights: HashMap<NodeIndex, Option<Vec<f32>>> = weights.iter().map(|(k, v)| {(k.to_owned(), Some(v.to_owned()))}).collect();
+  let sc = scalar(c);
+  MLSnark {
+    graph: sc,
+    scale: 200,
+    private_inputs: weights,
+  }
+}
+
 // #[cfg(test)]
 // mod tests {
 //   use std::collections::HashMap;

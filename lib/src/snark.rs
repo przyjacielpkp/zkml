@@ -72,9 +72,8 @@ impl<F: From<u128>> SourceType<F> {
   }
 }
 
-// We specialize these types for much better discoverability
-// type Curve = ark_bls12_381::Bls12_381;
-type CircuitField = ark_bls12_381::Fr;
+pub type Curve = ark_bls12_381::Bls12_381;
+pub type CircuitField = ark_bls12_381::Fr;
 
 ///
 /// NOTE on integer vs float computation:

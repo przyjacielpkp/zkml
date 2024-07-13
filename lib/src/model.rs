@@ -1,4 +1,4 @@
-use std::{convert::TryInto, fs, iter::zip};
+use std::{collections::HashMap, convert::TryInto, fs, iter::zip, ops::Deref, path::Path};
 
 use luminal::prelude::*;
 use luminal_nn::{Linear, ReLU};
@@ -6,19 +6,24 @@ use luminal_training::{mse_loss, sgd_on_graph, Autograd};
 
 const FILE_PATH: &str = "data/rp.data";
 
-pub fn read_dataset() -> (Vec<[f32; 9]>, Vec<f32>) {
-  let content: Vec<String> = fs::read_to_string(FILE_PATH)
+pub type InputsVec = Vec<[f32; 9]>;
+pub type OutputsVec = Vec<f32>;
+
+pub type Model = (Linear<9, 16>, ReLU, Linear<16, 16>, ReLU, Linear<16, 1>);
+
+pub fn read_dataset(path: &Path) -> (InputsVec, OutputsVec) {
+  let content: Vec<String> = fs::read_to_string(path)
     .unwrap()
     .lines()
     .map(String::from)
     .collect();
 
-  let mut x: Vec<[f32; 9]> = Vec::new();
-  let mut y: Vec<f32> = Vec::new();
+  let mut x: InputsVec = Vec::new();
+  let mut y: OutputsVec = Vec::new();
   for line in content {
     let mut parts: Vec<&str> = line.split(" ").collect();
     parts.retain(|&a| a != "");
-    let parts: Vec<f32> = parts.iter().map(|a| a.parse::<f32>().unwrap()).collect();
+    let parts: OutputsVec = parts.iter().map(|a| a.parse::<f32>().unwrap()).collect();
     let len = parts.len();
     x.push(parts[0..len - 1].try_into().unwrap());
     if parts[len - 1] == 2.0 {
@@ -31,10 +36,10 @@ pub fn read_dataset() -> (Vec<[f32; 9]>, Vec<f32>) {
 }
 
 pub fn split_dataset(
-  x: Vec<[f32; 9]>,
-  y: Vec<f32>,
+  x: InputsVec,
+  y: OutputsVec,
   ratio: f32,
-) -> (Vec<[f32; 9]>, Vec<[f32; 9]>, Vec<f32>, Vec<f32>) {
+) -> (InputsVec, InputsVec, OutputsVec, OutputsVec) {
   let len = x.len();
   let len_short = (len as f32 * ratio) as usize;
   let x_train = x[0..len_short].to_vec();
@@ -45,7 +50,7 @@ pub fn split_dataset(
   (x_train, x_test, y_train, y_test)
 }
 
-pub fn normalize_data(x: Vec<[f32; 9]>) -> Vec<[f32; 9]> {
+pub fn normalize_data(x: InputsVec) -> InputsVec {
   let mut mins: [f32; 9] = [11 as f32; 9];
   let mut maxs: [f32; 9] = [-1 as f32; 9];
 
@@ -56,7 +61,7 @@ pub fn normalize_data(x: Vec<[f32; 9]>) -> Vec<[f32; 9]> {
     }
   }
 
-  let mut xp: Vec<[f32; 9]> = Vec::new();
+  let mut xp: InputsVec = Vec::new();
   for a in x.iter() {
     let mut ap: [f32; 9] = [0 as f32; 9];
     for i in 0..9 {
@@ -66,10 +71,30 @@ pub fn normalize_data(x: Vec<[f32; 9]>) -> Vec<[f32; 9]> {
   }
   xp
 }
-pub fn run_model() {
+
+pub fn get_weights(graph: &Graph, model: &Model) -> HashMap<NodeIndex, Vec<f32>> {
+  let weights_indices = params(&model);
+  weights_indices
+    .iter()
+    .map(|index| {
+      (
+        index.clone(),
+        graph
+          .tensors
+          .get(&(index.clone(), 0))
+          .unwrap()
+          .downcast_ref::<Vec<f32>>()
+          .unwrap()
+          .clone(),
+      )
+    })
+    .collect()
+}
+
+pub fn run_model(dataset: (InputsVec, OutputsVec)) -> (Graph, Model) {
   // Setup gradient graph
   let mut cx = Graph::new();
-  let model = <(Linear<9, 16>, ReLU, Linear<16, 16>, ReLU, Linear<16, 1>)>::initialize(&mut cx);
+  let model = <Model>::initialize(&mut cx);
   let mut input = cx.tensor::<R1<9>>();
   let mut target = cx.tensor::<R1<1>>();
   let mut output = model.forward(input).retrieve();
@@ -99,7 +124,7 @@ pub fn run_model() {
   let start = std::time::Instant::now();
   let EPOCHS = 20;
 
-  let (X, Y) = read_dataset();
+  let (X, Y) = dataset;
   let (X_train, X_test, y_train, y_test) = split_dataset(X, Y, 0.8);
   let X_train = normalize_data(X_train);
   let mut iter = 0;
@@ -136,6 +161,7 @@ pub fn run_model() {
     start.elapsed().as_secs_f32(),
     start.elapsed().as_micros() / iter
   );
+  (cx, model)
 }
 
 pub struct ExponentialAverage {
