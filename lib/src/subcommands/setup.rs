@@ -41,7 +41,7 @@ impl Setup {
       .iter()
       .map(|(key, val)| {
         // the only way to get contents of node index
-        (std::format!("{:?}", key).clone(), val.clone())
+        (crate::utils::unpack_node_index(*key), val.clone())
       })
       .collect();
 
