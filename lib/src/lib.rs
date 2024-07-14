@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use luminal::prelude::NodeIndex;
 use model::{get_weights, Model, TrainedGraph};
-use snark::{MLSnark, SourceMap, SourceType};
 use scalar::{scalar, InputsTracker};
+use snark::{MLSnark, SourceMap, SourceType};
 use tracing::error;
 
 // #![feature(ascii_char)]
@@ -25,13 +25,17 @@ pub mod utils;
 pub const SCALE: usize = 1000000;
 
 /// Main crate export. Take a tensor computation and rewrite to snark.
-pub fn compile<F>(c: TrainedGraph) -> MLSnark {
+pub fn compile(c: TrainedGraph) -> MLSnark {
   // We set here the weights already. Set input with ::set_input.
   let sc = scalar(c.graph);
   let mut source_map = HashMap::new();
   // start here 2
   for (i, w_i) in c.weights {
-    let little_ids = sc.inputs_tracker.new_inputs.get(&i).unwrap_or_else( || panic!("Wrong id") );
+    let little_ids = sc
+      .inputs_tracker
+      .new_inputs
+      .get(&i)
+      .unwrap_or_else(|| panic!("Wrong id"));
     for (little_id, v) in little_ids.into_iter().zip(w_i) {
       source_map.insert(*little_id, SourceType::Public(v));
     }
@@ -40,7 +44,7 @@ pub fn compile<F>(c: TrainedGraph) -> MLSnark {
     graph: sc,
     scale: SCALE,
     source_map: source_map,
-    og_input_id : c.input_id,
+    og_input_id: c.input_id,
   }
 }
 
