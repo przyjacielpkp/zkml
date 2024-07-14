@@ -160,6 +160,45 @@ fn set_input(source_map: &mut SourceMap, tracker: &InputsTracker, id: NodeIndex,
   }
 }
 
+pub type SourceMap = HashMap<NodeIndex, SourceType<f32>>;
+
+impl MLSnark {
+  pub fn set_input(&mut self, value: Vec<f32>) {
+    set_input(
+      &mut self.source_map,
+      &self.graph.inputs_tracker,
+      self.og_input_id,
+      value,
+    )
+  }
+
+  pub fn make_keys(
+    &self,
+  ) -> Result<(ProvingKey<Bls12_381>, VerifyingKey<Bls12_381>), SynthesisError> {
+    let cloned = MLSnark {
+      graph: self.graph.copy_graph_roughly(),
+      scale: self.scale,
+      source_map: self.source_map.clone(),
+      og_input_id: self.og_input_id,
+    };
+    let rng = &mut ark_std::test_rng();
+    // generate the setup parameters
+    Groth16::<Bls12_381>::circuit_specific_setup(cloned, rng)
+  }
+
+  // pub fn make_proof
+}
+
+fn set_input(source_map: &mut SourceMap, tracker: &InputsTracker, id: NodeIndex, value: Vec<f32>) {
+  let little_ids = tracker
+    .new_inputs
+    .get(&id)
+    .unwrap_or_else(|| panic!("Wrong id"));
+  for (little_id, v) in little_ids.into_iter().zip(value) {
+    source_map.insert(*little_id, SourceType::Private(Some(v)));
+  }
+}
+
 impl ConstraintSynthesizer<CircuitField> for MLSnark {
   // THIS-WORKS
 

@@ -1,20 +1,9 @@
-use std::{
-  any::Any,
-  collections::HashMap,
-  convert::TryInto,
-  fs::{self, File},
-  iter::zip,
-  ops::Deref,
-  path::Path,
-};
+use std::{collections::HashMap, convert::TryInto, fs, iter::zip, path::Path};
 
-use dfdx::shapes::Const;
 use luminal::prelude::*;
 use luminal_nn::{Linear, ReLU};
 use luminal_training::{mse_loss, sgd_on_graph, Autograd};
-use petgraph::visit::{EdgeRef, IntoEdgeReferences, IntoNodeReferences};
-
-const FILE_PATH: &str = "data/rp.data";
+use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 
 pub type InputsVec = Vec<[f32; 9]>;
 pub type OutputsVec = Vec<f32>;
@@ -172,7 +161,6 @@ pub fn run_model(training_params: TrainingParams) -> TrainedGraph {
 
   let (mut loss_avg, mut acc_avg) = (ExponentialAverage::new(1.0), ExponentialAverage::new(0.0));
   let start = std::time::Instant::now();
-  // let epochs = 20;
 
   let (X, Y) = dataset;
   let (X_train, X_test, y_train, y_test) = split_dataset(X, Y, 0.8);

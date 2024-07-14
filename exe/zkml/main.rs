@@ -1,7 +1,11 @@
 use lib::*;
 
 use clap::{Parser, Subcommand};
-use std::{error::Error, path::PathBuf};
+use model::{read_dataset, TrainParams};
+use std::{
+  error::Error,
+  path::{Path, PathBuf},
+};
 
 #[derive(Parser)]
 struct Cli {

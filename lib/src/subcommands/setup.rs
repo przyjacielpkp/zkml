@@ -39,10 +39,7 @@ impl Setup {
     let weights: Vec<_> = trained_graph
       .weights
       .iter()
-      .map(|(key, val)| {
-        // the only way to get contents of node index
-        (crate::utils::unpack_node_index(*key), val.clone())
-      })
+      .map(|(key, val)| (crate::utils::unpack_node_index(*key), val.clone()))
       .collect();
 
     let circuit = crate::compile(trained_graph);
