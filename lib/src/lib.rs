@@ -5,7 +5,7 @@ use luminal::prelude::NodeIndex;
 use model::{get_weights, Model, TrainedGraph};
 use scalar::{scalar, InputsTracker};
 use snark::{MLSnark, SourceMap, SourceType};
-use tracing::error;
+use tracing::{error, info};
 
 // #![feature(ascii_char)]
 //
@@ -29,7 +29,7 @@ pub fn compile(c: TrainedGraph) -> MLSnark {
   // We set here the weights already. Set input with ::set_input.
   let sc = scalar(c.graph);
   let mut source_map = HashMap::new();
-  // start here 2
+  // set public
   for (i, w_i) in c.weights {
     let little_ids = sc
       .inputs_tracker
@@ -39,6 +39,15 @@ pub fn compile(c: TrainedGraph) -> MLSnark {
     for (little_id, v) in little_ids.into_iter().zip(w_i) {
       source_map.insert(*little_id, SourceType::Public(v));
     }
+  }
+  // set private
+  let little_ids = sc
+    .inputs_tracker
+    .new_inputs
+    .get(&c.input_id)
+    .unwrap_or_else(|| panic!("Wrong input id"));
+  for little_id in little_ids.into_iter() {
+    source_map.insert(*little_id, SourceType::Private(None));
   }
   MLSnark {
     graph: sc,
@@ -60,12 +69,13 @@ mod tests {
 
   use ark_bls12_381::Bls12_381;
   use ark_groth16::Groth16;
-use ark_snark::SNARK;
+  use ark_snark::SNARK;
 
   use crate::{
     compile,
     model::{parse_dataset, run_model, TrainParams},
-    snark::{CircuitField, MLSnark}, utils,
+    snark::{CircuitField, MLSnark},
+    utils,
   };
 
   #[test]

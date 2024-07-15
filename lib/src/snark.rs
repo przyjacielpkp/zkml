@@ -2,7 +2,6 @@ use std::{collections::HashMap, fmt::Debug, ops::Div};
 
 use ark_bls12_381::Bls12_381;
 use ark_bls12_381::Fr;
-use ark_bls12_381::Fr as BlsFr;
 use ark_ff::Field;
 use ark_ff::Zero;
 use ark_groth16::Groth16;
@@ -78,7 +77,7 @@ impl<F: From<u128>> SourceType<F> {
   }
 }
 
-fn scaled_float<F: From<u128>>(x: f32, scale : usize) -> F {
+fn scaled_float<F: From<u128>>(x: f32, scale: usize) -> F {
   let y: u128 = (x * (scale as f32)).round() as u128;
   F::from(y)
 }
@@ -138,27 +137,27 @@ impl MLSnark {
   pub fn make_keys(
     &self,
   ) -> Result<(ProvingKey<Bls12_381>, VerifyingKey<Bls12_381>), SynthesisError> {
-    let cloned = MLSnark {
-      graph: self.graph.copy_graph_roughly(),
-      scale: self.scale,
-      source_map: self.source_map.clone(),
-      og_input_id: self.og_input_id,
-    };
+    // let cloned = MLSnark {
+    //   graph: self.graph.copy_graph_roughly(),
+    //   scale: self.scale,
+    //   source_map: self.source_map.clone(),
+    //   og_input_id: self.og_input_id,
+    // };
     let rng = &mut ark_std::test_rng();
     // generate the setup parameters
-    Groth16::<Bls12_381>::circuit_specific_setup(cloned, rng)
+    Groth16::<Bls12_381>::circuit_specific_setup(self, rng)
   }
 
   // first provide all inputs with the set_input method, otherwise SynthesisError
   pub fn make_proof(&self, pk: &ProvingKey<Bls12_381>) -> Result<Proof<Bls12_381>, SynthesisError> {
     let rng = &mut ark_std::test_rng();
-    let cloned = MLSnark {
-      graph: self.graph.copy_graph_roughly(),
-      scale: self.scale,
-      source_map: self.source_map.clone(),
-      og_input_id: self.og_input_id,
-    };
-    Groth16::<Bls12_381>::prove(pk, cloned, rng)
+    // let cloned = MLSnark {
+    //   graph: self.graph.copy_graph_roughly(),
+    //   scale: self.scale,
+    //   source_map: self.source_map.clone(),
+    //   og_input_id: self.og_input_id,
+    // };
+    Groth16::<Bls12_381>::prove(pk, self, rng)
   }
 }
 
@@ -172,7 +171,7 @@ fn set_input(source_map: &mut SourceMap, tracker: &InputsTracker, id: NodeIndex,
   }
 }
 
-impl ConstraintSynthesizer<CircuitField> for MLSnark {
+impl ConstraintSynthesizer<CircuitField> for &MLSnark {
   // THIS-WORKS
 
   #[instrument(level = "debug", name = "generate_constraints")]
@@ -185,6 +184,7 @@ impl ConstraintSynthesizer<CircuitField> for MLSnark {
     let scale_F = CircuitField::from(scale as u128);
     let source_map: HashMap<NodeIndex, SourceType<CircuitField>> = self
       .source_map
+      .clone()
       .into_iter()
       .map(|(k, v)| {
         let v = match v {
@@ -205,8 +205,6 @@ impl ConstraintSynthesizer<CircuitField> for MLSnark {
     // ^ thats silly that we need to track assignments but thats really because of the low level nature of arkworks api
 
     for x in pi {
-      info!("x={:?}", x);
-
       let incoming: Vec<_> = graph
         .edges_directed(x, Incoming)
         .filter_map(|e| e.weight().as_data().map(|d| (d, e.source())))
@@ -217,7 +215,8 @@ impl ConstraintSynthesizer<CircuitField> for MLSnark {
         // SOURCE
         if incoming.is_empty() {
           if graph.check_node_type::<ConstantOp>(x) {
-            let constant_op = graph.node_weight(x)
+            let constant_op = graph
+              .node_weight(x)
               .unwrap()
               .as_any()
               .downcast_ref::<ConstantOp>()
@@ -230,16 +229,17 @@ impl ConstraintSynthesizer<CircuitField> for MLSnark {
               .unwrap_or_else(|| panic!("Unknown source node {:?}!", x));
             use SourceType::*;
             match src_ty {
-              Private(mn) => {
-                (
-                  cs.new_witness_variable(|| mn.ok_or(SynthesisError::AssignmentMissing))?,
-                  mn.clone(),
-                )
-              },
+              Private(mn) => (
+                cs.new_witness_variable(|| mn.ok_or(SynthesisError::AssignmentMissing))?,
+                mn.clone(),
+              ),
               Public(n) => (cs.new_input_variable(|| Ok(*n))?, Some(*n)),
             }
           } else {
-            panic!("No other source types left")
+            panic!(
+              "Unknown source type: {:?}",
+              graph.node_weight(x).unwrap().type_name()
+            )
           }
         }
         // UNOP

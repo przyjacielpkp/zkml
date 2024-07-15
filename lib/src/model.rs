@@ -126,18 +126,19 @@ pub fn run_model(train_params: TrainParams) -> (Graph, Model, TrainedGraph) {
   // Setup gradient graph
   let mut cx = Graph::new();
   let model = <Model>::initialize(&mut cx);
-  let mut input = cx.tensor::<R1<9>>();
-  let mut target = cx.tensor::<R1<1>>();
-  let mut output = model.forward(input).retrieve();
-  let mut loss = mse_loss(output, target).retrieve();
+  let input = cx.tensor::<R1<9>>();
+  let output = model.forward(input).retrieve();
 
-  let mut weights = params(&model);
   cx.display();
   // record graph without gradients. assuming nodeids dont change in Autograd::compile
-  let mut cx_og = copy_graph_roughly(&cx);
+  let cx_og = copy_graph_roughly(&cx);
+
+  let target = cx.tensor::<R1<1>>();
+  let loss = mse_loss(output, target).retrieve();
+  let weights = params(&model);
 
   let grads = cx.compile(Autograd::new(&weights, loss), ());
-  let (mut new_weights, lr) = sgd_on_graph(&mut cx, &weights, &grads);
+  let (new_weights, lr) = sgd_on_graph(&mut cx, &weights, &grads);
   cx.keep_tensors(&new_weights);
   cx.keep_tensors(&weights);
   lr.set(5e-3);
@@ -160,7 +161,7 @@ pub fn run_model(train_params: TrainParams) -> (Graph, Model, TrainedGraph) {
   // let EPOCHS = 20;
 
   let (X, Y) = dataset;
-  let (X_train, X_test, y_train, y_test) = split_dataset(X, Y, 0.8);
+  let (X_train, _x_test, y_train, _y_test) = split_dataset(X, Y, 0.8);
   let X_train = normalize_data(X_train);
   let mut iter = 0;
   for _ in 0..EPOCHS {
@@ -173,7 +174,7 @@ pub fn run_model(train_params: TrainParams) -> (Graph, Model, TrainedGraph) {
       transfer_data_same_graph(&new_weights, &weights, &mut cx);
       loss_avg.update(loss.data()[0]);
       loss.drop();
-      println!("{:}, {:}", output.data()[0], answer[0]);
+      // println!("{:}, {:}", output.data()[0], answer[0]);
       acc_avg.update(
         output
           .data()
@@ -183,10 +184,10 @@ pub fn run_model(train_params: TrainParams) -> (Graph, Model, TrainedGraph) {
           .count() as f32,
       );
       output.drop();
-      println!(
-        "Iter {iter} Loss: {:.2} Acc: {:.2}",
-        loss_avg.value, acc_avg.value
-      );
+      // println!(
+      //   "Iter {iter} Loss: {:.2} Acc: {:.2}",
+      //   loss_avg.value, acc_avg.value
+      // );
       iter += 1;
     }
   }

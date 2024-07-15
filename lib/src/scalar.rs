@@ -114,7 +114,7 @@ impl Operator for InputOp {
 #[derive(Debug, Default, Clone)]
 pub struct ConstantOp {
   // we support just the Constant's we can evaluate statically, thats why it can be simpler than Constant op
-  pub val : f32
+  pub val: f32,
 }
 
 impl Operator for ConstantOp {
@@ -198,7 +198,7 @@ impl Compiler for Scalarize {
           {
             Some((_, _, shape)) => shape,
             None => {
-              panic!("Add node has no outgoing edges and is not a retrieval node.")
+              panic!("A node has no outgoing edges and is not a retrieval node.")
             }
           }
         }
@@ -242,7 +242,6 @@ impl Compiler for Scalarize {
 
       for (e, (input_order, output_order, shape), target) in out_edges {
         let (src, trg) = graph.edge_endpoints(e).unwrap();
-        info!("e: {:?} -> {:?}", src, trg);
         let logical_index = edge_src_indices[&e];
         // using output_order as the remembered index in logical shape
         // TODO: not recalculate the index_expressions so much
@@ -255,10 +254,6 @@ impl Compiler for Scalarize {
             panic!("Something fucked up, outgoing edge index outside of expected physical size")
           }
         };
-        info!(
-          "phys={:?}, i={:?}, output={:?}",
-          phys_index, input_order, output_order
-        );
         graph.add_edge(
           little_nodes[phys_index],
           target,
@@ -331,7 +326,7 @@ impl Compiler for Scalarize {
         "Expect result size to be the size after collapsing the ax dim."
       );
       assert!(size == front_size * back_size);
-      let neutral_node = graph.constant(neutral).id;
+      let neutral_node = graph.add_op(ConstantOp { val: neutral }).finish();
       //  add_op(Constant((ConstantValue::Float(neutral)), FxHashMap::new()));
       let create_reduce_circuit = |i| {
         let front_i = i / front_size;
@@ -365,7 +360,6 @@ impl Compiler for Scalarize {
         })
       };
       let little_nodes: Vec<NodeIndex> = (0..size).map(create_reduce_circuit).collect();
-      info!("reduce: {:?}", little_nodes);
       connect_out_edges(x, &little_nodes, &edge_src_indices, graph);
       little_nodes
     }
@@ -418,7 +412,7 @@ impl Compiler for Scalarize {
             .downcast_ref::<Vec<f32>>()
             .unwrap()
             .clone()[0];
-          let little_nodes = make_nodes(size, ConstantOp {val}, graph);
+          let little_nodes = make_nodes(size, ConstantOp { val }, graph);
           connect_out_edges(x, &little_nodes, &edge_src_indices, graph);
           assert!(
             little_nodes.len() == 1,
@@ -545,9 +539,12 @@ pub fn copy_graph_roughly(src: &Graph) -> Graph {
       let op = src.get_op::<ConstantOp>(x);
       g.add_op(op.clone()).finish()
     } else if src.check_node_type::<InputOp>(x) {
-      g.add_op(InputOp{}).finish()
+      g.add_op(InputOp {}).finish()
     } else {
-      panic!("Unknown node type: {:?}", src.node_weight(x).unwrap().type_name())
+      panic!(
+        "Unknown node type: {:?}",
+        src.node_weight(x).unwrap().type_name()
+      )
     };
     // map.insert(x, n);
     assert!(x == n)
@@ -559,7 +556,9 @@ pub fn copy_graph_roughly(src: &Graph) -> Graph {
   }
   // copy retrieval marks
   // src.to_retrieve.iter().for_each(|(id, sh)| {g.to_retrieve.insert(map[id], *sh);});
-  src.to_retrieve.iter().for_each(|(id, sh)| {g.to_retrieve.insert(*id, *sh);});
+  src.to_retrieve.iter().for_each(|(id, sh)| {
+    g.to_retrieve.insert(*id, *sh);
+  });
 
   g
 }
