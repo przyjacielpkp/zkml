@@ -112,7 +112,10 @@ impl Operator for InputOp {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct ConstantOp {}
+pub struct ConstantOp {
+  // we support just the Constant's we can evaluate statically, thats why it can be simpler than Constant op
+  pub val : f32
+}
 
 impl Operator for ConstantOp {
   fn process(&mut self, _inp: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
@@ -136,7 +139,6 @@ impl Operator for Max {
 pub struct InputsTracker {
   /// If x was of shape (2, 3) then new_inputs[x] should be a vector of length 6
   pub new_inputs: HashMap<NodeIndex, Vec<NodeIndex>>,
-  pub constants: HashMap<NodeIndex, f32>,
 }
 
 #[derive(Debug, Default)]
@@ -412,19 +414,16 @@ impl Compiler for Scalarize {
           inputs_tracker.new_inputs.insert(x, little_nodes.clone());
           little_nodes
         } else if graph.check_node_type::<Constant>(x) {
-          let little_nodes = make_nodes(size, ConstantOp {}, graph);
-          connect_out_edges(x, &little_nodes, &edge_src_indices, graph);
           let val = graph.node_weight_mut(x).unwrap().process(vec![])[0]
             .downcast_ref::<Vec<f32>>()
             .unwrap()
             .clone()[0];
+          let little_nodes = make_nodes(size, ConstantOp {val}, graph);
+          connect_out_edges(x, &little_nodes, &edge_src_indices, graph);
           assert!(
             little_nodes.len() == 1,
             "Constants are expected to be scalars"
           );
-          little_nodes.iter().for_each(|y| {
-            inputs_tracker.constants.insert(*y, val);
-          });
           little_nodes
         } else {
           panic!("Unsupported source node type!")
@@ -512,11 +511,12 @@ pub fn pretty_print_g(graph: &Graph) -> Result<(), Box<dyn Error>> {
 }
 
 // copies things that are relevant. very much not exact copy
+// Expects a graph with indices from the [0..n] range without gaps (check the commented lines).
 pub fn copy_graph_roughly(src: &Graph) -> Graph {
   let mut g = Graph::new();
-  let mut map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+  // let mut map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
   // copy nodes
-  for x in src.node_indices() {
+  for x in src.node_indices().sorted() {
     let n = if src.check_node_type::<Add>(x) {
       g.add_op(Add {}).finish()
     } else if src.check_node_type::<Mul>(x) {
@@ -540,17 +540,27 @@ pub fn copy_graph_roughly(src: &Graph) -> Graph {
     } else if src.check_node_type::<Constant>(x) {
       let op = src.get_op::<Constant>(x);
       g.add_op(Constant(op.0.clone(), op.1)).finish()
+    // !!
+    } else if src.check_node_type::<ConstantOp>(x) {
+      let op = src.get_op::<ConstantOp>(x);
+      g.add_op(op.clone()).finish()
+    } else if src.check_node_type::<InputOp>(x) {
+      g.add_op(InputOp{}).finish()
     } else {
       panic!("Unknown node type: {:?}", src.node_weight(x).unwrap().type_name())
     };
-    map.insert(x, n);
+    // map.insert(x, n);
+    assert!(x == n)
   }
   // copy edges
   for e in src.edge_references() {
     g.add_edge(e.source(), e.target(), e.weight().clone());
+    // g.add_edge(map[&e.source()], map[&e.target()], e.weight().clone());
   }
   // copy retrieval marks
+  // src.to_retrieve.iter().for_each(|(id, sh)| {g.to_retrieve.insert(map[id], *sh);});
   src.to_retrieve.iter().for_each(|(id, sh)| {g.to_retrieve.insert(*id, *sh);});
+
   g
 }
 

@@ -33,6 +33,8 @@ use luminal::{
 };
 use tracing::{info, instrument, warn};
 
+use crate::scalar::ConstantOp;
+use crate::scalar::InputOp;
 // use crate::model::copy_graph_roughly;
 use crate::scalar::{InputsTracker, ScalarGraph};
 
@@ -58,10 +60,6 @@ pub fn snark_input_mapping<F: From<u128>>(
       result.insert(x.clone(), SourceType::Private(None));
     }),
   });
-  // public
-  inputs_tracker.constants.into_iter().for_each(|(k, v)| {
-    result.insert(k, SourceType::scaled_public(v, scale));
-  });
   result
 }
 
@@ -73,13 +71,16 @@ pub enum SourceType<F> {
 
 impl<F: From<u128>> SourceType<F> {
   pub fn scaled_private(x: f32, scale: usize) -> Self {
-    let y: u128 = (x * (scale as f32)).round() as u128;
-    SourceType::Private(Some(F::from(y)))
+    SourceType::Private(Some(scaled_float(x, scale)))
   }
   pub fn scaled_public(x: f32, scale: usize) -> Self {
-    let y: u128 = (x * (scale as f32)).round() as u128;
-    SourceType::Public(F::from(y))
+    SourceType::Public(scaled_float(x, scale))
   }
+}
+
+fn scaled_float<F: From<u128>>(x: f32, scale : usize) -> F {
+  let y: u128 = (x * (scale as f32)).round() as u128;
+  F::from(y)
 }
 
 pub type Curve = ark_bls12_381::Bls12_381;
@@ -215,18 +216,30 @@ impl ConstraintSynthesizer<CircuitField> for MLSnark {
       let (v, ass) = {
         // SOURCE
         if incoming.is_empty() {
-          let src_ty = source_map
-            .get(&x)
-            .unwrap_or_else(|| panic!("Unknown source node {:?}!", x));
-          use SourceType::*;
-          match src_ty {
-            Private(mn) => {
-              (
-                cs.new_witness_variable(|| mn.ok_or(SynthesisError::AssignmentMissing))?,
-                mn.clone(),
-              )
-            },
-            Public(n) => (cs.new_input_variable(|| Ok(*n))?, Some(*n)),
+          if graph.check_node_type::<ConstantOp>(x) {
+            let constant_op = graph.node_weight(x)
+              .unwrap()
+              .as_any()
+              .downcast_ref::<ConstantOp>()
+              .unwrap();
+            let n = scaled_float(constant_op.val, scale);
+            (cs.new_input_variable(|| Ok(n))?, Some(n))
+          } else if graph.check_node_type::<InputOp>(x) {
+            let src_ty = source_map
+              .get(&x)
+              .unwrap_or_else(|| panic!("Unknown source node {:?}!", x));
+            use SourceType::*;
+            match src_ty {
+              Private(mn) => {
+                (
+                  cs.new_witness_variable(|| mn.ok_or(SynthesisError::AssignmentMissing))?,
+                  mn.clone(),
+                )
+              },
+              Public(n) => (cs.new_input_variable(|| Ok(*n))?, Some(*n)),
+            }
+          } else {
+            panic!("No other source types left")
           }
         }
         // UNOP
