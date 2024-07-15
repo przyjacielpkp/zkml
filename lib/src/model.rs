@@ -13,6 +13,8 @@ use luminal_nn::{Linear, ReLU};
 use luminal_training::{mse_loss, sgd_on_graph, Autograd};
 use petgraph::visit::{EdgeRef, IntoEdgeReferences, IntoNodeReferences};
 
+use crate::scalar::copy_graph_roughly;
+
 const FILE_PATH: &str = "data/rp.data";
 
 pub type InputsVec = Vec<[f32; 9]>;
@@ -132,7 +134,7 @@ pub fn run_model(train_params: TrainParams) -> (Graph, Model, TrainedGraph) {
   let mut weights = params(&model);
   cx.display();
   // record graph without gradients. assuming nodeids dont change in Autograd::compile
-  let cx_og = copy_graph_roughly(&cx);
+  let mut cx_og = copy_graph_roughly(&cx);
 
   let grads = cx.compile(Autograd::new(&weights, loss), ());
   let (mut new_weights, lr) = sgd_on_graph(&mut cx, &weights, &grads);
@@ -140,18 +142,18 @@ pub fn run_model(train_params: TrainParams) -> (Graph, Model, TrainedGraph) {
   cx.keep_tensors(&weights);
   lr.set(5e-3);
 
-  #[cfg(all(not(feature = "metal"), not(feature = "cuda")))]
-  cx.compile(
-    GenericCompiler::default(),
-    (
-      &mut input,
-      &mut target,
-      &mut loss,
-      &mut output,
-      &mut weights,
-      &mut new_weights,
-    ),
-  );
+  // #[cfg(all(not(feature = "metal"), not(feature = "cuda")))]
+  // cx.compile(
+  //   GenericCompiler::default(),
+  //   (
+  //     &mut input,
+  //     &mut target,
+  //     &mut loss,
+  //     &mut output,
+  //     &mut weights,
+  //     &mut new_weights,
+  //   ),
+  // );
 
   let (mut loss_avg, mut acc_avg) = (ExponentialAverage::new(1.0), ExponentialAverage::new(0.0));
   let start = std::time::Instant::now();
@@ -254,47 +256,4 @@ impl ExponentialAverage {
     self.value = 0.0;
     self.t = 0;
   }
-}
-
-// copies things that are relevant. very much not exact copy
-pub fn copy_graph_roughly(src: &Graph) -> Graph {
-  let mut g = Graph::new();
-  let mut map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
-  // copy nodes
-  for x in src.node_indices() {
-    let n = if src.check_node_type::<Add>(x) {
-      g.add_op(Add {}).finish()
-    } else if src.check_node_type::<Mul>(x) {
-      g.add_op(Mul {}).finish()
-    } else if src.check_node_type::<LessThan>(x) {
-      g.add_op(LessThan {}).finish()
-    } else if src.check_node_type::<Function>(x) {
-      g.add_op(Function(
-        "Load".to_string(),
-        Box::new(|_| panic!("dont run")),
-      ))
-      .finish()
-    } else if src.check_node_type::<Recip>(x) {
-      g.add_op(Recip {}).finish()
-    } else if src.check_node_type::<MaxReduce>(x) {
-      let op = src.get_op::<MaxReduce>(x);
-      g.add_op(MaxReduce(op.0)).finish()
-    } else if src.check_node_type::<SumReduce>(x) {
-      let op = src.get_op::<SumReduce>(x);
-      g.add_op(SumReduce(op.0)).finish()
-    } else if src.check_node_type::<Constant>(x) {
-      let op = src.get_op::<Constant>(x);
-      g.add_op(Constant(op.0.clone(), op.1)).finish()
-    } else {
-      panic!("Unknown node type: {:?}", src.node_weight(x).unwrap().type_name())
-    };
-    map.insert(x, n);
-  }
-  // copy edges
-  for e in src.edge_references() {
-    g.add_edge(e.source(), e.target(), e.weight().clone());
-  }
-  // copy retrieval marks
-  src.to_retrieve.iter().for_each(|(id, sh)| {g.to_retrieve.insert(*id, *sh);});
-  g
 }

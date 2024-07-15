@@ -12,7 +12,7 @@ use std::{collections::HashMap, error::Error, fs::File, io::Write};
 use itertools::Itertools;
 use petgraph::{
   graph::EdgeIndex,
-  visit::{EdgeRef, IntoNodeIdentifiers},
+  visit::{EdgeRef, IntoEdgeReferences, IntoNodeIdentifiers},
   Direction::{Incoming, Outgoing},
 };
 use tracing::{debug, info, instrument, warn};
@@ -23,7 +23,7 @@ use luminal::{
   shape::Shape,
 };
 
-use crate::model::copy_graph_roughly;
+// use crate::model::copy_graph_roughly;
 
 /// Asserts (in non-strictly-typed way) that all input tensors are single values.
 #[derive(Debug)]
@@ -239,6 +239,8 @@ impl Compiler for Scalarize {
         .collect();
 
       for (e, (input_order, output_order, shape), target) in out_edges {
+        let (src, trg) = graph.edge_endpoints(e).unwrap();
+        info!("e: {:?} -> {:?}", src, trg);
         let logical_index = edge_src_indices[&e];
         // using output_order as the remembered index in logical shape
         // TODO: not recalculate the index_expressions so much
@@ -278,7 +280,7 @@ impl Compiler for Scalarize {
       let little_nodes = make_nodes(size, op, graph);
       connect_out_edges(x, &little_nodes, edge_src_indices, graph);
 
-      for (e, (b, output_order, shape), source) in incoming {
+      for (_e, (b, output_order, shape), source) in incoming {
         // assert!(*output_order == 0, "Assuming sigle valued Op's"); // actually idk if we do
         // assuming static shape
         let k = shape.n_elements().to_usize().unwrap();
@@ -286,8 +288,7 @@ impl Compiler for Scalarize {
         for j in 0..k {
           let (from, to) = (j, j); // pointwise
           debug!("k={:?}, j={:?}, b={:?}", k, j, b);
-          edge_src_indices.insert(*e, from);
-          graph.add_edge(
+          let new_e = graph.add_edge(
             source.clone(),
             little_nodes[to],
             Dependency::Data {
@@ -296,6 +297,7 @@ impl Compiler for Scalarize {
               shape: *shape, // saving the original shape
             },
           );
+          edge_src_indices.insert(new_e, from);
         }
       }
       little_nodes
@@ -303,6 +305,7 @@ impl Compiler for Scalarize {
 
     fn reduce_op<T: Operator + 'static + Clone>(
       op: T,
+      neutral: f32,
       x: NodeIndex,
       size: usize,
       ax: usize, /* reduce axis */
@@ -315,16 +318,19 @@ impl Compiler for Scalarize {
       let ax_len = dims[ax];
       let front_size = dims.iter().take(ax).product::<usize>().max(1);
       let back_size = dims.iter().skip(ax + 1).product::<usize>().max(1);
-      assert!(
-        ax_len > 1,
-        "Why reducing scalar? but also im lazy to implement that edgecase."
-      );
+      // assert!(
+      //   ax_len > 1,
+      //   "Why reducing scalar? but also im lazy to implement that edgecase. ax_len={:?}, ax={:?}, dims={:?}, sh={:?}",
+      //   ax_len, ax, dims, sh
+      // );
       assert!(*from_output == 0, "Thats not strictly necessary but 1) is always the case 2) is needed for this lazy implementation." );
       assert!(
         size == sh.n_elements().to_usize().unwrap() / ax_len,
         "Expect result size to be the size after collapsing the ax dim."
       );
       assert!(size == front_size * back_size);
+      let neutral_node = graph.constant(neutral).id;
+      //  add_op(Constant((ConstantValue::Float(neutral)), FxHashMap::new()));
       let create_reduce_circuit = |i| {
         let front_i = i / front_size;
         let back_i = i % front_size;
@@ -332,7 +338,7 @@ impl Compiler for Scalarize {
         let xs = (0..ax_len).map(|k| {
           front_i * back_size * ax_len + k * back_size + back_i // index in y of k-th element in current axe
         });
-        xs.fold(*y, |l_node, k| {
+        xs.fold(neutral_node, |l_node, k| {
           let new = graph.add_op(op.clone()).finish();
           let _ = graph.add_edge(
             l_node,
@@ -357,6 +363,7 @@ impl Compiler for Scalarize {
         })
       };
       let little_nodes: Vec<NodeIndex> = (0..size).map(create_reduce_circuit).collect();
+      info!("reduce: {:?}", little_nodes);
       connect_out_edges(x, &little_nodes, &edge_src_indices, graph);
       little_nodes
     }
@@ -388,7 +395,6 @@ impl Compiler for Scalarize {
       // Invariant of the loop:
       //  - all nodes upstream from x (later in toposort) were already substituted for many scalar nodes.
       //  - the outgoing edges are of scalar shape and we have recorded *what physical index in the result of x the edge connects to*
-      info!("x={:?} in g={:?}", x, graph.graph);
 
       let incoming: Vec<_> = graph
         .edges_directed(x, Incoming)
@@ -435,7 +441,7 @@ impl Compiler for Scalarize {
             .as_any()
             .downcast_ref()
             .unwrap();
-          reduce_op(Add {}, x, size, ax.0, yy, &mut edge_src_indices, graph)
+          reduce_op(Add {}, 0.0, x, size, ax.0, yy, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<MaxReduce>(x) {
           let ax: &MaxReduce = graph
             .node_weight(x)
@@ -443,7 +449,7 @@ impl Compiler for Scalarize {
             .as_any()
             .downcast_ref()
             .unwrap();
-          reduce_op(Max {}, x, size, ax.0, yy, &mut edge_src_indices, graph)
+          reduce_op(Max {}, 1.0, x, size, ax.0, yy, &mut edge_src_indices, graph)
         } else {
           panic!("Unsupported unop OP")
         }
@@ -503,6 +509,49 @@ pub fn pretty_print_g(graph: &Graph) -> Result<(), Box<dyn Error>> {
   println!("pretty g = {:?}", str);
 
   Ok(())
+}
+
+// copies things that are relevant. very much not exact copy
+pub fn copy_graph_roughly(src: &Graph) -> Graph {
+  let mut g = Graph::new();
+  let mut map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+  // copy nodes
+  for x in src.node_indices() {
+    let n = if src.check_node_type::<Add>(x) {
+      g.add_op(Add {}).finish()
+    } else if src.check_node_type::<Mul>(x) {
+      g.add_op(Mul {}).finish()
+    } else if src.check_node_type::<LessThan>(x) {
+      g.add_op(LessThan {}).finish()
+    } else if src.check_node_type::<Function>(x) {
+      g.add_op(Function(
+        "Load".to_string(),
+        Box::new(|_| panic!("dont run")),
+      ))
+      .finish()
+    } else if src.check_node_type::<Recip>(x) {
+      g.add_op(Recip {}).finish()
+    } else if src.check_node_type::<MaxReduce>(x) {
+      let op = src.get_op::<MaxReduce>(x);
+      g.add_op(MaxReduce(op.0)).finish()
+    } else if src.check_node_type::<SumReduce>(x) {
+      let op = src.get_op::<SumReduce>(x);
+      g.add_op(SumReduce(op.0)).finish()
+    } else if src.check_node_type::<Constant>(x) {
+      let op = src.get_op::<Constant>(x);
+      g.add_op(Constant(op.0.clone(), op.1)).finish()
+    } else {
+      panic!("Unknown node type: {:?}", src.node_weight(x).unwrap().type_name())
+    };
+    map.insert(x, n);
+  }
+  // copy edges
+  for e in src.edge_references() {
+    g.add_edge(e.source(), e.target(), e.weight().clone());
+  }
+  // copy retrieval marks
+  src.to_retrieve.iter().for_each(|(id, sh)| {g.to_retrieve.insert(*id, *sh);});
+  g
 }
 
 #[cfg(test)]

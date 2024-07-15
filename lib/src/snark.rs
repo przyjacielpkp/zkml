@@ -33,7 +33,7 @@ use luminal::{
 };
 use tracing::{info, instrument, warn};
 
-use crate::model::copy_graph_roughly;
+// use crate::model::copy_graph_roughly;
 use crate::scalar::{InputsTracker, ScalarGraph};
 
 /// Tensor computation is initialized by setting input tensors data and then evaluating.

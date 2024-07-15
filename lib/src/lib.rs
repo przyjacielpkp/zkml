@@ -65,11 +65,12 @@ use ark_snark::SNARK;
   use crate::{
     compile,
     model::{parse_dataset, run_model, TrainParams},
-    snark::{CircuitField, MLSnark},
+    snark::{CircuitField, MLSnark}, utils,
   };
 
   #[test]
   pub fn test_trained_into_snark_0() -> Result<(), String> {
+    utils::init_logging().unwrap();
     let err = |e| format!("{:?}", e).to_string();
     let data = parse_dataset(include_str!("../../data/rp.data").to_string());
     let (_, _model, trained_model) = crate::model::run_model(TrainParams { data, epochs: 1 });
