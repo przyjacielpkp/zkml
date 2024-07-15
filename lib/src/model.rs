@@ -1,4 +1,12 @@
-use std::{any::Any, collections::HashMap, convert::TryInto, fs::{self, File}, iter::zip, ops::Deref, path::Path};
+use std::{
+  any::Any,
+  collections::HashMap,
+  convert::TryInto,
+  fs::{self, File},
+  iter::zip,
+  ops::Deref,
+  path::Path,
+};
 
 use luminal::prelude::*;
 use luminal_nn::{Linear, ReLU};
@@ -12,13 +20,13 @@ pub type OutputsVec = Vec<f32>;
 
 pub type Model = (Linear<9, 16>, ReLU, Linear<16, 16>, ReLU, Linear<16, 1>);
 
-pub fn read_dataset(path: &Path) -> (InputsVec, OutputsVec) {
-  let content: Vec<String> = fs::read_to_string(path)
-    // todo: error handling
-    .unwrap()
-    .lines()
-    .map(String::from)
-    .collect();
+pub fn read_dataset(path: &Path) -> Result<(InputsVec, OutputsVec), std::io::Error> {
+  let content: String = fs::read_to_string(path)?;
+  Ok(parse_dataset(content))
+}
+
+pub fn parse_dataset(content: String) -> (InputsVec, OutputsVec) {
+  let content: Vec<String> = content.lines().map(String::from).collect();
 
   // todo: why no csv?
   let mut x: InputsVec = Vec::new();
@@ -110,7 +118,7 @@ pub struct TrainedGraph {
   // pub model: Model,
 }
 
-pub fn run_model(train_params : TrainParams) -> (Graph, Model, TrainedGraph) {
+pub fn run_model(train_params: TrainParams) -> (Graph, Model, TrainedGraph) {
   let dataset: (InputsVec, OutputsVec) = train_params.data;
   let EPOCHS = train_params.epochs;
   // Setup gradient graph
@@ -188,17 +196,30 @@ pub fn run_model(train_params : TrainParams) -> (Graph, Model, TrainedGraph) {
   );
   cx.display();
   let weights_vec = weights
-    .into_iter().map(|a| (a, 
-      cx.tensors.get(&(a, 0 /* assuming single output */)).unwrap().downcast_ref::<Vec<f32>>().unwrap().clone().into_iter().collect()
-    )).collect()
-  ;
-  (cx, model, 
-    TrainedGraph { 
-      graph : cx_og,
-      input_id : input.id, 
-      weights : weights_vec,
+    .into_iter()
+    .map(|a| {
+      (
+        a,
+        cx.tensors
+          .get(&(a, 0 /* assuming single output */))
+          .unwrap()
+          .downcast_ref::<Vec<f32>>()
+          .unwrap()
+          .clone()
+          .into_iter()
+          .collect(),
+      )
+    })
+    .collect();
+  (
+    cx,
+    model,
+    TrainedGraph {
+      graph: cx_og,
+      input_id: input.id,
+      weights: weights_vec,
       // model: model.clone()
-    }  
+    },
   )
 }
 
@@ -239,15 +260,22 @@ impl ExponentialAverage {
 pub fn copy_graph_roughly(src: &Graph) -> Graph {
   let mut g = Graph::new();
   let mut map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+  // copy nodes
   for x in src.node_indices() {
     let n = if src.check_node_type::<Add>(x) {
-      g.add_op(Add{}).finish()
+      g.add_op(Add {}).finish()
     } else if src.check_node_type::<Mul>(x) {
-      g.add_op(Mul{}).finish()
+      g.add_op(Mul {}).finish()
+    } else if src.check_node_type::<LessThan>(x) {
+      g.add_op(LessThan {}).finish()
     } else if src.check_node_type::<Function>(x) {
-      g.add_op(Function("Load".to_string(), Box::new(|_| panic!("dont run")))).finish()
+      g.add_op(Function(
+        "Load".to_string(),
+        Box::new(|_| panic!("dont run")),
+      ))
+      .finish()
     } else if src.check_node_type::<Recip>(x) {
-      g.add_op(Recip{}).finish()
+      g.add_op(Recip {}).finish()
     } else if src.check_node_type::<MaxReduce>(x) {
       let op = src.get_op::<MaxReduce>(x);
       g.add_op(MaxReduce(op.0)).finish()
@@ -258,12 +286,15 @@ pub fn copy_graph_roughly(src: &Graph) -> Graph {
       let op = src.get_op::<Constant>(x);
       g.add_op(Constant(op.0.clone(), op.1)).finish()
     } else {
-      panic!("Unknown node type")
+      panic!("Unknown node type: {:?}", src.node_weight(x).unwrap().type_name())
     };
     map.insert(x, n);
   }
+  // copy edges
   for e in src.edge_references() {
     g.add_edge(e.source(), e.target(), e.weight().clone());
   }
+  // copy retrieval marks
+  src.to_retrieve.iter().for_each(|(id, sh)| {g.to_retrieve.insert(*id, *sh);});
   g
 }

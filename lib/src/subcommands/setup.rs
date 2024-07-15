@@ -36,7 +36,7 @@ impl Setup {
   pub async fn run(self) {
     let rng = StdRng::seed_from_u64(1);
 
-    let dataset = crate::model::read_dataset(self.dataset_path.as_path());
+    let dataset = crate::model::read_dataset(self.dataset_path.as_path()).unwrap();
     let (graph, model, weights) = crate::model::run_model(TrainParams {
       data: dataset,
       epochs: 20,

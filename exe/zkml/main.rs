@@ -2,7 +2,10 @@ use lib::*;
 
 use clap::{Parser, Subcommand};
 use model::{read_dataset, TrainParams};
-use std::{error::Error, path::{Path, PathBuf}};
+use std::{
+  error::Error,
+  path::{Path, PathBuf},
+};
 
 #[derive(Parser)]
 struct Cli {
@@ -56,7 +59,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
       app.run().await;
     }
     Command::Model { data, epochs } => {
-      let ds = read_dataset(Path::new(&data));
+      let ds = read_dataset(Path::new(&data)).unwrap();
       lib::model::run_model(TrainParams { data: ds, epochs });
     }
   }

@@ -49,8 +49,8 @@ pub struct ScalarGraph {
 impl ScalarGraph {
   pub fn copy_graph_roughly(&self) -> Self {
     ScalarGraph {
-      graph : copy_graph_roughly(&self.graph),
-      inputs_tracker : self.inputs_tracker.clone()
+      graph: copy_graph_roughly(&self.graph),
+      inputs_tracker: self.inputs_tracker.clone(),
     }
   }
 }

@@ -2,9 +2,11 @@ use std::{collections::HashMap, fmt::Debug, ops::Div};
 
 use ark_bls12_381::Bls12_381;
 use ark_bls12_381::Fr;
+use ark_bls12_381::Fr as BlsFr;
 use ark_ff::Field;
 use ark_ff::Zero;
 use ark_groth16::Groth16;
+use ark_groth16::Proof;
 use ark_groth16::ProvingKey;
 use ark_groth16::VerifyingKey;
 use ark_r1cs_std::fields::fp::FpVar;
@@ -16,7 +18,6 @@ use ark_relations::{
 use ark_snark::SNARK;
 use ark_std::cmp::Ordering::Less;
 use itertools::Itertools;
-use ark_bls12_381::{Fr as BlsFr};
 // use ark_groth16::Groth16;
 // use ark_snark::SNARK;
 
@@ -117,46 +118,58 @@ pub struct MLSnark {
   // pub private_inputs: HashMap<NodeIndex, Option<Vec<f32>>>,
   pub source_map: HashMap<NodeIndex, SourceType<f32>>,
   // for convenience
-  pub og_input_id : NodeIndex,
+  pub og_input_id: NodeIndex,
   // pub inputs_tracker : InputsTracker
 }
 
 pub type SourceMap = HashMap<NodeIndex, SourceType<f32>>;
 
 impl MLSnark {
-  pub fn set_input(&mut self, value : Vec<f32>) {
-    set_input(&mut self.source_map, &self.graph.inputs_tracker, self.og_input_id, value)
-  }
-
-  pub fn make_keys(&self) ->
-    Result<
-        (ProvingKey<Bls12_381>, 
-        VerifyingKey<Bls12_381>), 
-      SynthesisError> {
-    let cloned = MLSnark {
-      graph : self.graph.copy_graph_roughly(),
-      scale : self.scale,
-      source_map : self.source_map.clone(),
-      og_input_id: self.og_input_id
-    };
-    let rng = &mut ark_std::test_rng();
-    // generate the setup parameters
-    Groth16::<Bls12_381>::circuit_specific_setup(
-      cloned,
-      rng,
+  pub fn set_input(&mut self, value: Vec<f32>) {
+    set_input(
+      &mut self.source_map,
+      &self.graph.inputs_tracker,
+      self.og_input_id,
+      value,
     )
   }
 
-  // pub fn make_proof
+  pub fn make_keys(
+    &self,
+  ) -> Result<(ProvingKey<Bls12_381>, VerifyingKey<Bls12_381>), SynthesisError> {
+    let cloned = MLSnark {
+      graph: self.graph.copy_graph_roughly(),
+      scale: self.scale,
+      source_map: self.source_map.clone(),
+      og_input_id: self.og_input_id,
+    };
+    let rng = &mut ark_std::test_rng();
+    // generate the setup parameters
+    Groth16::<Bls12_381>::circuit_specific_setup(cloned, rng)
+  }
 
+  // first provide all inputs with the set_input method, otherwise SynthesisError
+  pub fn make_proof(&self, pk: &ProvingKey<Bls12_381>) -> Result<Proof<Bls12_381>, SynthesisError> {
+    let rng = &mut ark_std::test_rng();
+    let cloned = MLSnark {
+      graph: self.graph.copy_graph_roughly(),
+      scale: self.scale,
+      source_map: self.source_map.clone(),
+      og_input_id: self.og_input_id,
+    };
+    Groth16::<Bls12_381>::prove(pk, cloned, rng)
+  }
 }
 
-fn set_input( source_map : &mut SourceMap, tracker : &InputsTracker, id: NodeIndex, value : Vec<f32>) {
-  let little_ids = tracker.new_inputs.get(&id).unwrap_or_else( || panic!("Wrong id") );
+fn set_input(source_map: &mut SourceMap, tracker: &InputsTracker, id: NodeIndex, value: Vec<f32>) {
+  let little_ids = tracker
+    .new_inputs
+    .get(&id)
+    .unwrap_or_else(|| panic!("Wrong id"));
   for (little_id, v) in little_ids.into_iter().zip(value) {
     source_map.insert(*little_id, SourceType::Private(Some(v)));
   }
-} 
+}
 
 impl ConstraintSynthesizer<CircuitField> for MLSnark {
   // THIS-WORKS
@@ -169,8 +182,10 @@ impl ConstraintSynthesizer<CircuitField> for MLSnark {
     let graph = &self.graph.graph;
     let scale = self.scale;
     let scale_F = CircuitField::from(scale as u128);
-    let source_map: HashMap<NodeIndex, SourceType<CircuitField>> =
-      self.source_map.into_iter().map(|(k, v)| {
+    let source_map: HashMap<NodeIndex, SourceType<CircuitField>> = self
+      .source_map
+      .into_iter()
+      .map(|(k, v)| {
         let v = match v {
           SourceType::Private(Some(x)) => SourceType::scaled_private(x, scale),
           SourceType::Private(None) => SourceType::Private(None),
@@ -178,9 +193,7 @@ impl ConstraintSynthesizer<CircuitField> for MLSnark {
         };
         (k, v)
       })
-      .collect()
-    ;
-      // snark_input_mapping(self.private_inputs, self.scale, self.graph.inputs_tracker);
+      .collect();
 
     let pi = petgraph::algo::toposort(&graph.graph, None).unwrap();
     let mut vars: HashMap<NodeIndex, ark_relations::r1cs::Variable> = HashMap::new();
@@ -207,10 +220,12 @@ impl ConstraintSynthesizer<CircuitField> for MLSnark {
             .unwrap_or_else(|| panic!("Unknown source node {:?}!", x));
           use SourceType::*;
           match src_ty {
-            Private(mn) => (
-              cs.new_witness_variable(|| mn.ok_or(SynthesisError::AssignmentMissing))?,
-              mn.clone(),
-            ),
+            Private(mn) => {
+              (
+                cs.new_witness_variable(|| mn.ok_or(SynthesisError::AssignmentMissing))?,
+                mn.clone(),
+              )
+            },
             Public(n) => (cs.new_input_variable(|| Ok(*n))?, Some(*n)),
           }
         }
