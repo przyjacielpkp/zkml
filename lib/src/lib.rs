@@ -1,11 +1,8 @@
 use std::{collections::HashMap, vec};
 
-use itertools::Itertools;
-use luminal::prelude::NodeIndex;
-use model::{get_weights, Model, TrainedGraph};
-use scalar::{scalar, InputsTracker};
-use snark::{CircuitField, MLSnark, SourceMap, SourceType};
-use tracing::{error, info};
+use model::TrainedGraph;
+use scalar::{copy_graph_roughly, scalar};
+use snark::{CircuitField, MLSnark, SourceType};
 
 // #![feature(ascii_char)]
 //
@@ -25,12 +22,14 @@ pub mod utils;
 pub const SCALE: usize = 1000000;
 
 /// Main crate export. Take a tensor computation and rewrite to snark.
-pub fn compile(c: TrainedGraph) -> MLSnark<CircuitField> {
+pub fn compile(c: &TrainedGraph) -> MLSnark<CircuitField> {
+  let graph = copy_graph_roughly(&c.graph);
+  let weights = c.weights.clone();
   // We set here the weights already. Set input with ::set_input.
-  let sc = scalar(c.graph);
+  let sc = scalar(graph);
   let mut source_map = HashMap::new();
   // set public
-  for (i, w_i) in c.weights {
+  for (i, w_i) in weights {
     let little_ids = sc
       .inputs_tracker
       .new_inputs
@@ -54,48 +53,113 @@ pub fn compile(c: TrainedGraph) -> MLSnark<CircuitField> {
     scale: SCALE,
     source_map: source_map,
     og_input_id: c.input_id,
-    recorded_public_inputs : vec![],
+    recorded_public_inputs: vec![],
   }
 }
 
 #[cfg(test)]
 mod tests {
-  // use std::collections::HashMap;
-
-  // use luminal::{graph::Graph, shape::R1};
-
-  // use ark_bls12_381::{Bls12_381, Fr as BlsFr};
-  // use ark_groth16::Groth16;
-  // use ark_snark::SNARK;
-
-  use ark_bls12_381::Bls12_381;
-  use ark_groth16::Groth16;
-  use ark_snark::SNARK;
-use tracing::info;
 
   use crate::{
     compile,
-    model::{parse_dataset, TrainParams},
+    model::{parse_dataset, TrainParams, TrainedGraph},
     snark::{scaled_float, CircuitField},
-    utils, SCALE,
+    utils::init_logging_tests,
+    SCALE,
   };
+  use ark_bls12_381::Bls12_381;
+  use ark_ff::Field;
+  use ark_groth16::Groth16;
+  use ark_snark::SNARK;
+  use itertools::Itertools;
 
+  pub fn test_trained_into_snark(
+    mut trained_model: TrainedGraph,
+    input: Vec<f32>,
+  ) -> Result<(), String> {
+    let err = |e| format!("{:?}", e).to_string();
+    let scope = crate::utils::init_logging_tests();
+
+    // Public: compile into snark
+    let mut snark = compile(&trained_model);
+    let (pk, vk) = snark.make_keys().map_err(err)?;
+
+    // Prover: set input and make proof.
+    snark.set_input(input.clone());
+    let proof = snark.make_proof(&pk).map_err(err)?;
+    let public_inputs = snark.recorded_public_inputs.clone();
+    // ^ now share public_inputs with Verifier. the vector contains the publically known weights (available already in the Public step) and the evaluation result of the model, which the prover shares, as otherwise he's not proving anything.
+
+    // Verifier: verify the proof
+    let verified = Groth16::<Bls12_381>::verify(&vk, &public_inputs, &proof);
+
+    // God: and compare the results obtained
+    let snark_eval_result = snark.get_evaluation_result(); // this really just is public_inputs[-1], a publicly known result of the circuit
+    let model_eval_res_float = trained_model.evaluate(input)[0];
+    let model_eval_result: CircuitField = scaled_float(model_eval_res_float, SCALE);
+    let diff = (snark_eval_result - model_eval_result)
+      .square()
+      .le(&scaled_float(0.01, SCALE));
+
+    assert!(verified == Ok(true), "Proof is verified");
+    assert!(
+      diff,
+      "The snark evaluates to the correct result (~ float precision)"
+    );
+    tracing::info!("evaluated the model to {:?}, which is represented by a field element {:?}. Also evaluated the snark to a field element {:?}. The two results are within 0.01 float margin. Verifier correctly verified the proof that snark evaluates to that value.", model_eval_res_float, model_eval_result, snark_eval_result);
+
+    drop(scope);
+    Ok(())
+  }
+
+  // #[ignore]
   #[test]
   pub fn test_trained_into_snark_0() -> Result<(), String> {
-    utils::init_logging().unwrap();
-    let err = |e| format!("{:?}", e).to_string();
+    // See the model shape at https://dreampuf.github.io/GraphvizOnline/#digraph%20%7B%0A%20%20%20%200%20%5B%20label%20%3D%20%22Weight%20Load%20%7C%200%22%20%5D%0A%20%20%20%201%20%5B%20label%20%3D%20%22Tensor%20Load%20%7C%201%22%20%5D%0A%20%20%20%202%20%5B%20label%20%3D%20%22Mul%20%7C%202%22%20%5D%0A%20%20%20%203%20%5B%20label%20%3D%20%22SumReduce(2)%20%7C%203%22%20%5D%0A%20%20%20%200%20-%3E%202%20%5B%20%20%5D%0A%20%20%20%201%20-%3E%202%20%5B%20%20%5D%0A%20%20%20%202%20-%3E%203%20%5B%20%20%5D%0A%7D%0A
+    tracing::info!("linear layer, data A");
     let data = parse_dataset(include_str!("../../data/rp.data").to_string());
-    let (_, _model, trained_model) = crate::model::tiny_model::run_model(TrainParams { data, epochs: 1 });
-    let we = trained_model.weights.clone();
-    let mut snark = compile(trained_model);
-    let (pk, vk) = snark.make_keys().map_err(err)?;
-    // set input
-    snark.set_input(vec![0.0; 9]);
-    let proof = snark.make_proof(&pk).map_err(err)?;
-    let public_inputs = snark.recorded_public_inputs;
-    let verified = Groth16::<Bls12_381>::verify(&vk, &public_inputs, &proof);
-    println!("{:?}", verified);
-    assert!(verified == Ok(true));
-    Ok(())
+    let trained_model = crate::model::tiny_model::run_model(TrainParams { data, epochs: 1 });
+    let input = (0..9).map(|x| f32::from(x as i16)).collect_vec();
+    test_trained_into_snark(trained_model, input)
+  }
+
+  // #[ignore]
+  #[test]
+  pub fn test_trained_into_snark_1() -> Result<(), String> {
+    tracing::info!("linear layer, data B");
+    let data = parse_dataset(include_str!("../../data/rp.data").to_string());
+    let trained_model = crate::model::tiny_model::run_model(TrainParams { data, epochs: 1 });
+    let input = (9..18).map(|x| f32::from(x as i16)).collect_vec();
+    test_trained_into_snark(trained_model, input)
+  }
+
+  // #[ignore]
+  #[test]
+  pub fn test_trained_into_snark_2() -> Result<(), String> {
+    // see the model shape at https://dreampuf.github.io/GraphvizOnline/#digraph%20%7B%0A%20%20%20%200%20%5B%20label%20%3D%20%22Weight%20Load%20%7C%200%22%20%5D%0A%20%20%20%201%20%5B%20label%20%3D%20%22Weight%20Load%20%7C%201%22%20%5D%0A%20%20%20%202%20%5B%20label%20%3D%20%22Tensor%20Load%20%7C%202%22%20%5D%0A%20%20%20%203%20%5B%20label%20%3D%20%22Mul%20%7C%203%22%20%5D%0A%20%20%20%204%20%5B%20label%20%3D%20%22SumReduce(2)%20%7C%204%22%20%5D%0A%20%20%20%205%20%5B%20label%20%3D%20%22Constant(0.0)%20%7C%205%22%20%5D%0A%20%20%20%206%20%5B%20label%20%3D%20%22LessThan%20%7C%206%22%20%5D%0A%20%20%20%207%20%5B%20label%20%3D%20%22Mul%20%7C%207%22%20%5D%0A%20%20%20%208%20%5B%20label%20%3D%20%22LessThan%20%7C%208%22%20%5D%0A%20%20%20%209%20%5B%20label%20%3D%20%22Constant(-1.0)%20%7C%209%22%20%5D%0A%20%20%20%2010%20%5B%20label%20%3D%20%22Mul%20%7C%2010%22%20%5D%0A%20%20%20%2011%20%5B%20label%20%3D%20%22Constant(1.0)%20%7C%2011%22%20%5D%0A%20%20%20%2012%20%5B%20label%20%3D%20%22Add%20%7C%2012%22%20%5D%0A%20%20%20%2013%20%5B%20label%20%3D%20%22Mul%20%7C%2013%22%20%5D%0A%20%20%20%2014%20%5B%20label%20%3D%20%22Add%20%7C%2014%22%20%5D%0A%20%20%20%2015%20%5B%20label%20%3D%20%22Mul%20%7C%2015%22%20%5D%0A%20%20%20%2016%20%5B%20label%20%3D%20%22SumReduce(2)%20%7C%2016%22%20%5D%0A%20%20%20%200%20-%3E%203%20%5B%20%20%5D%0A%20%20%20%201%20-%3E%2015%20%5B%20%20%5D%0A%20%20%20%202%20-%3E%203%20%5B%20%20%5D%0A%20%20%20%203%20-%3E%204%20%5B%20%20%5D%0A%20%20%20%204%20-%3E%208%20%5B%20%20%5D%0A%20%20%20%204%20-%3E%206%20%5B%20%20%5D%0A%20%20%20%204%20-%3E%2013%20%5B%20%20%5D%0A%20%20%20%205%20-%3E%208%20%5B%20%20%5D%0A%20%20%20%205%20-%3E%207%20%5B%20%20%5D%0A%20%20%20%205%20-%3E%206%20%5B%20%20%5D%0A%20%20%20%206%20-%3E%207%20%5B%20%20%5D%0A%20%20%20%207%20-%3E%2014%20%5B%20%20%5D%0A%20%20%20%208%20-%3E%2010%20%5B%20%20%5D%0A%20%20%20%209%20-%3E%2010%20%5B%20%20%5D%0A%20%20%20%2010%20-%3E%2012%20%5B%20%20%5D%0A%20%20%20%2011%20-%3E%2012%20%5B%20%20%5D%0A%20%20%20%2012%20-%3E%2013%20%5B%20%20%5D%0A%20%20%20%2013%20-%3E%2014%20%5B%20%20%5D%0A%20%20%20%2014%20-%3E%2015%20%5B%20%20%5D%0A%20%20%20%2015%20-%3E%2016%20%5B%20%20%5D%0A%7D%0A
+    tracing::info!("linear layer into ReLU, data A");
+    let data = parse_dataset(include_str!("../../data/rp.data").to_string());
+    let trained_model = crate::model::lessthan_model::run_model(TrainParams { data, epochs: 1 });
+    let input = (0..9).map(|x| f32::from(x as i16)).collect_vec();
+    test_trained_into_snark(trained_model, input)
+  }
+
+  // #[ignore]
+  #[test]
+  pub fn test_trained_into_snark_3() -> Result<(), String> {
+    tracing::info!("linear layer into ReLU, data B");
+    let data = parse_dataset(include_str!("../../data/rp.data").to_string());
+    let trained_model = crate::model::lessthan_model::run_model(TrainParams { data, epochs: 1 });
+    let input = (9..18).map(|x| f32::from(x as i16)).collect_vec();
+    test_trained_into_snark(trained_model, input)
+  }
+
+  #[ignore = "runs for too long"]
+  #[test]
+  pub fn test_trained_into_snark_4() -> Result<(), String> {
+    let data = parse_dataset(include_str!("../../data/rp.data").to_string());
+    let trained_model = crate::model::medium_model::run_model(TrainParams { data, epochs: 1 });
+    let input = (0..9).map(|x| f32::from(x as i16)).collect_vec();
+    test_trained_into_snark(trained_model, input)
   }
 }

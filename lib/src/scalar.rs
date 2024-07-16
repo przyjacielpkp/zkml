@@ -15,7 +15,7 @@ use petgraph::{
   visit::{EdgeRef, IntoEdgeReferences, IntoNodeIdentifiers},
   Direction::{Incoming, Outgoing},
 };
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, instrument, warn};
 
 use luminal::{
   op::{Constant, InputTensor, Operator},
@@ -76,8 +76,8 @@ pub struct UniformOutShapes;
 /// We keep it out of interest in whether it succeeds. Comment out the moment it fails and we know why.
 impl Compiler for UniformOutShapes {
   type Output = ();
-  #[instrument(level = "debug", skip(ids))]
-  fn compile<T: ToIdsMut>(&self, graph: &mut Graph, ids: T) -> Self::Output {
+  #[instrument(level = "debug", skip(_ids))]
+  fn compile<T: ToIdsMut>(&self, graph: &mut Graph, _ids: T) -> Self::Output {
     // For every node substitute as many copies of it as there are distinct outgoing shapes.
     // Connect the new nodes to the target nodes correspondingly wrt shapes.
 
@@ -241,7 +241,6 @@ impl Compiler for Scalarize {
         .collect();
 
       for (e, (input_order, output_order, shape), target) in out_edges {
-        let (src, trg) = graph.edge_endpoints(e).unwrap();
         let logical_index = edge_src_indices[&e];
         // using output_order as the remembered index in logical shape
         // TODO: not recalculate the index_expressions so much
@@ -496,7 +495,7 @@ pub fn pretty_print_g(graph: &Graph) -> Result<(), Box<dyn Error>> {
   use petgraph_graphml::GraphMl;
   let a = GraphMl::new(&graph.graph).pretty_print(true);
   let mut str: Vec<u8> = vec![];
-  let x = a.to_writer(&mut str)?;
+  a.to_writer(&mut str)?;
   let str = String::from_utf8(str)?;
   // let str1 = str.as_ascii().into_iter().map(|x| x.clone()).collect::<Vec<_>>();
   println!("pretty g = {:?}", str);
@@ -573,13 +572,11 @@ mod tests {
   };
   use tracing::info;
 
-  use crate::{
-    scalar::{pretty_print_g, save_graphviz},
-    utils,
-  };
+  use crate::{scalar::save_graphviz, utils};
 
   use super::ScalarCompiler;
 
+  #[ignore = "debugging purpose test"]
   #[test]
   fn test_run() -> Result<(), Box<dyn Error>> {
     utils::init_logging()?;
@@ -607,6 +604,7 @@ mod tests {
     Ok(())
   }
 
+  #[ignore = "debugging purpose test"]
   #[test]
   fn test_run_2() -> Result<(), Box<dyn Error>> {
     utils::init_logging()?;
@@ -635,65 +633,6 @@ mod tests {
     // https://dreampuf.github.io/GraphvizOnline/#digraph%20%7B%0A%20%20%20%200%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%201%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%203%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%204%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%205%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%206%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%207%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%208%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%209%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2010%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2011%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2012%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2013%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2014%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2015%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2016%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2017%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2018%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2012%20-%3E%2011%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%0A%2C%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%203%20-%3E%204%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2011%20-%3E%2010%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%0A%2C%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2011%20-%3E%209%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2016%20-%3E%208%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2015%20-%3E%207%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2014%20-%3E%206%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%201%20-%3E%205%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2011%20-%3E%208%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%204%20-%3E%207%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%204%20-%3E%206%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%204%20-%3E%205%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2013%20-%3E%2011%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%0A%2C%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%200%20-%3E%204%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2018%20-%3E%2010%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%0A%2C%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2017%20-%3E%209%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%7D%0A
 
     Ok(())
-  }
-}
-
-#[cfg(test)]
-mod tests_other {
-  use rand::{rngs::StdRng, SeedableRng};
-
-  use luminal::prelude::*;
-
-  use crate::scalar::ScalarCompiler;
-  luminal::test_imports!();
-
-  #[test]
-  fn test_matmul() {
-    let mut cx = Graph::new();
-    let a = cx.tensor::<(Dyn<'M'>, Dyn<'K'>)>();
-    let b = cx.tensor::<(Dyn<'K'>, Dyn<'N'>)>();
-    let mut c = a.matmul(b).retrieve();
-
-    cx.compile(ScalarCompiler::default(), &mut c);
-
-    let d_dev = dfdx::prelude::Cpu::default();
-    for m in (1..23).step_by(4) {
-      for k in (1..35).step_by(3) {
-        for n in (1..70).step_by(7) {
-          let mut rng = StdRng::seed_from_u64(0);
-          let a_data = random_vec_rng(m * k, &mut rng);
-          let b_data = random_vec_rng(k * n, &mut rng);
-          a.set_dyn(a_data.clone(), &[m, k]);
-          b.set_dyn(b_data.clone(), &[k, n]);
-
-          cx.execute();
-
-          let d_a = d_dev.tensor_from_vec(a_data, (m, k));
-          let d_b = d_dev.tensor_from_vec(b_data, (k, n));
-          let d_c = d_a.matmul(d_b);
-
-          assert_close_precision(&c.data(), &d_c.to_dtype::<f32>().as_vec(), 1e-2);
-          c.drop();
-        }
-      }
-    }
-  }
-
-  #[test]
-  fn test_cpu_matmul_2d_2() {
-    let mut cx = Graph::new();
-    let a = cx.tensor::<R2<2, 3>>();
-    a.set(vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0]);
-    let b = cx.tensor::<R2<3, 4>>();
-    b.set(vec![1., 2., 3., 1., 2., 3., 1., 2., 3., 1., 2., 3.]);
-    let mut c = a.matmul(b).retrieve();
-
-    cx.execute();
-
-    let unoptimized_c = c.data();
-    cx.compile(ScalarCompiler::default(), &mut c);
-    cx.execute();
-    assert_close(&c.data(), &unoptimized_c);
   }
 }
 

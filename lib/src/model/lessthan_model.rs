@@ -1,7 +1,7 @@
 use std::iter::zip;
 
 use luminal::prelude::*;
-use luminal_nn::Linear;
+use luminal_nn::{Linear, ReLU};
 use luminal_training::{mse_loss, sgd_on_graph, Autograd};
 use tracing::info;
 
@@ -12,7 +12,7 @@ use crate::{
 
 use super::{TrainParams, TrainedGraph};
 
-pub type Model = Linear<9, 1>;
+pub type Model = (Linear<9, 2>, ReLU, Linear<2, 1>);
 
 pub fn run_model(train_params: TrainParams) -> TrainedGraph {
   let dataset: (InputsVec, OutputsVec) = train_params.data;
@@ -96,7 +96,6 @@ pub fn run_model(train_params: TrainParams) -> TrainedGraph {
       )
     })
     .collect();
-
   TrainedGraph {
     cx: cx,
     graph: cx_og,

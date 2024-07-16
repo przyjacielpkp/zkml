@@ -17,8 +17,8 @@ use ark_relations::{
 use ark_snark::SNARK;
 use ark_std::cmp::Ordering::Less;
 use itertools::Itertools;
-// use ark_groth16::Groth16;
-// use ark_snark::SNARK;
+
+use luminal::prelude::petgraph::Direction::Outgoing;
 
 ///
 /// Produce snark from the computation after scalar and integer transformations.
@@ -41,7 +41,7 @@ use crate::scalar::{InputsTracker, ScalarGraph};
 /// This function takes a mapping from input index to its tensor and creates a
 /// mapping useful for the snark synthesis where input nodes are mapped to scalar values
 /// using the given mapping from big tensor input nodes to little scalar input nodes.
-pub fn snark_input_mapping<F: From<u128>>(
+pub fn snark_input_mapping<F: From<i64>>(
   assignment: HashMap<NodeIndex, Option<Vec<f32>>>,
   scale: usize,
   inputs_tracker: InputsTracker,
@@ -68,7 +68,7 @@ pub enum SourceType<F> {
   Public(F),
 }
 
-impl<F: From<u128>> SourceType<F> {
+impl<F: From<i64>> SourceType<F> {
   pub fn scaled_private(x: f32, scale: usize) -> Self {
     SourceType::Private(Some(scaled_float(x, scale)))
   }
@@ -77,10 +77,15 @@ impl<F: From<u128>> SourceType<F> {
   }
 }
 
-pub fn scaled_float<F: From<u128>>(x: f32, scale: usize) -> F {
-  let y: u128 = (x * (scale as f32)).round() as u128;
+pub fn scaled_float<F: From<i64>>(x: f32, scale: usize) -> F {
+  let y: i64 = (x * (scale as f32)).round() as i64;
   F::from(y)
 }
+
+// pub fn unscaled_field(f: CircuitField, scale: usize) -> f32 {
+//   let x: u128 = f.try_into().unwrap();
+//   let y: u128 = (x * (scale as f32)).round() as u128;
+// }
 
 pub type Curve = ark_bls12_381::Bls12_381;
 pub type CircuitField = ark_bls12_381::Fr;
@@ -123,13 +128,19 @@ pub struct MLSnark<F> {
 
   // this is needed due to some redundancy in how public inputs need to be passed to verify.
   // this field is filled up while calling SynthesizeSnark with assignments given to public inputs in order.
-  // The few last elements record the result of the circuit, last element if single output.
-  pub recorded_public_inputs : Vec<F>
+  // The few last elements record the result of the circuit, last element if single output. This is due to the topo ordering and model with single output vector, record more info if for our graph toposort stops guaranteeing that.
+  // In practice: save this field after calling mk_proof. Share with the verifier.
+  pub recorded_public_inputs: Vec<F>,
 }
 
 pub type SourceMap = HashMap<NodeIndex, SourceType<f32>>;
 
 impl MLSnark<CircuitField> {
+  /// Watch out: this needs to be called straight after make_proof.
+  pub fn get_evaluation_result(&self) -> CircuitField {
+    self.recorded_public_inputs.last().unwrap().clone()
+  }
+
   pub fn set_input(&mut self, value: Vec<f32>) {
     set_input(
       &mut self.source_map,
@@ -154,7 +165,10 @@ impl MLSnark<CircuitField> {
   }
 
   // first provide all inputs with the set_input method, otherwise SynthesisError
-  pub fn make_proof(&mut self, pk: &ProvingKey<Bls12_381>) -> Result<Proof<Bls12_381>, SynthesisError> {
+  pub fn make_proof(
+    &mut self,
+    pk: &ProvingKey<Bls12_381>,
+  ) -> Result<Proof<Bls12_381>, SynthesisError> {
     let rng = &mut ark_std::test_rng();
     // let cloned = MLSnark {
     //   graph: self.graph.copy_graph_roughly(),
@@ -186,7 +200,7 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
   ) -> Result<(), SynthesisError> {
     let graph = &self.graph.graph;
     let scale = self.scale;
-    let scale_F = CircuitField::from(scale as u128);
+    let scale_f = CircuitField::from(scale as u128);
     let source_map: HashMap<NodeIndex, SourceType<CircuitField>> = self
       .source_map
       .clone()
@@ -203,10 +217,10 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
     let mut public_record = vec![];
 
     // return public input variable and assignment but also record it in the map
-    let mut mk_public_input = |n| {
+    let mk_public_input = |n, public_record: &mut Vec<_>| {
       public_record.push(n);
       let v = cs.new_input_variable(|| Ok(n))?;
-      Ok((v , Some(n)))
+      Ok((v, Some(n)))
     };
 
     let pi = petgraph::algo::toposort(&graph.graph, None).unwrap();
@@ -235,7 +249,7 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
               .downcast_ref::<ConstantOp>()
               .unwrap();
             let n = scaled_float(constant_op.val, scale);
-            mk_public_input(n)?
+            mk_public_input(n, &mut public_record)?
           } else if graph.check_node_type::<InputOp>(x) {
             let src_ty = source_map
               .get(&x)
@@ -246,9 +260,7 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
                 cs.new_witness_variable(|| mn.ok_or(SynthesisError::AssignmentMissing))?,
                 mn.clone(),
               ),
-              Public(n) =>
-                mk_public_input(*n)?
-              ,
+              Public(n) => mk_public_input(*n, &mut public_record)?,
             }
           } else {
             panic!(
@@ -267,7 +279,7 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
             // The inverse is: 1/f = scale/n
             // so its represented by: m = scale * scale / n
             let ass = yy_val.map(|y| {
-              scale_F.square()
+              scale_f.square()
                 * y.inverse().unwrap_or_else(|| {
                   warn!("Tried inversing 0. Returning 0");
                   CircuitField::zero()
@@ -277,7 +289,7 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
             cs.enforce_constraint(
               lc!() + yy,
               lc!() + v,
-              lc!() + (scale_F * scale_F, ConstraintSystem::<CircuitField>::one()),
+              lc!() + (scale_f * scale_f, ConstraintSystem::<CircuitField>::one()),
             )?; // m * n == scale * scale
             (v, ass)
           } else {
@@ -312,12 +324,12 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
               .map(|(l, r)| l * r);
             let tmp =
               cs.new_witness_variable(|| tmp_ass.ok_or(SynthesisError::AssignmentMissing))?;
-            let ass = tmp_ass.map(|x| x.div(scale_F));
+            let ass = tmp_ass.map(|x| x.div(scale_f));
             let v = cs.new_witness_variable(|| ass.ok_or(SynthesisError::AssignmentMissing))?;
             cs.enforce_constraint(lc!() + ll, lc!() + rr, lc!() + tmp)?;
             cs.enforce_constraint(
               lc!() + v,
-              lc!() + (scale_F, ConstraintSystem::<CircuitField>::one()),
+              lc!() + (scale_f, ConstraintSystem::<CircuitField>::one()),
               lc!() + tmp,
             )?;
             (v, ass)
@@ -329,9 +341,9 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
 
             let ass = || {
               lll.is_cmp(&rrr, Less, false).and_then(|is_cmp|
-                // !!! so here remember that 1 is scale_F
+                // !!! so here remember that 1 is scale_f
                 Boolean::<CircuitField>::le_bits_to_fp_var(&vec![is_cmp])?
-                .value().map(|x| x * scale_F))
+                .value().map(|x| x * scale_f))
             };
             let ret = cs.new_witness_variable(ass)?;
             (ret, ass().ok())
@@ -344,55 +356,24 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
       };
       vars.insert(x, v);
       assignments.insert(x, ass);
+
+      // if the node is a result node (a sink), assert its value against a public input.
+      // we can do that only when creating the proof and having the private inputs,
+      // so lets match on the Option. This all is quite a poor design but it follows from how arkworks is structured.
+      if graph.edges_directed(x, Outgoing).next().is_none() {
+        let z = cs.new_input_variable(|| ass.ok_or(SynthesisError::AssignmentMissing))?;
+        cs.enforce_constraint(
+          lc!() + z,
+          lc!() + ConstraintSystem::<CircuitField>::one(),
+          lc!() + v,
+        )?;
+        match ass {
+          Some(n) => public_record.push(n),
+          None => {}
+        }
+      }
     }
     self.recorded_public_inputs = public_record;
     Ok(())
   }
-}
-
-#[cfg(test)]
-mod test {
-  // use super::*;
-  // use ark_bls12_381::{Bls12_381, Fr as BlsFr};
-  // use ark_groth16::Groth16;
-  // use ark_snark::SNARK;
-  //
-  // #[test]
-  // fn test_groth16_circuit_cubic() {
-  //     let rng = &mut ark_std::test_rng();
-
-  //     // generate the setup parameters
-  //     let (pk, vk) = Groth16::<Bls12_381>::circuit_specific_setup(
-  //         CubicDemoCircuit::<BlsFr> { x: None },
-  //         rng,
-  //     )
-  //     .unwrap();
-
-  //     // calculate the proof by passing witness variable value
-  //     let proof1 = Groth16::<Bls12_381>::prove(
-  //         &pk,
-  //         CubicDemoCircuit::<BlsFr> {
-  //             x: Some(BlsFr::from(3)),
-  //         },
-  //         rng,
-  //     )
-  //     .unwrap();
-
-  //     // validate the proof
-  //     assert!(Groth16::<Bls12_381>::verify(&vk, &[BlsFr::from(35)], &proof1).unwrap());
-
-  //     // calculate the proof by passing witness variable value
-  //     let proof2 = Groth16::<Bls12_381>::prove(
-  //         &pk,
-  //         CubicDemoCircuit::<BlsFr> {
-  //             x: Some(BlsFr::from(4)),
-  //         },
-  //         rng,
-  //     )
-  //     .unwrap();
-  //     assert!(Groth16::<Bls12_381>::verify(&vk, &[BlsFr::from(73)], &proof2).unwrap());
-
-  //     assert!(!Groth16::<Bls12_381>::verify(&vk, &[BlsFr::from(35)], &proof2).unwrap());
-  //     assert!(!Groth16::<Bls12_381>::verify(&vk, &[BlsFr::from(73)], &proof1).unwrap());
-  // }
 }

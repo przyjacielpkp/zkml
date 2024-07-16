@@ -1,21 +1,19 @@
 use std::{
-  any::Any,
   collections::HashMap,
   convert::TryInto,
-  fs::{self, File},
+  fs::{self},
   iter::zip,
-  ops::Deref,
   path::Path,
 };
 
 use luminal::prelude::*;
 use luminal_nn::{Linear, ReLU};
 use luminal_training::{mse_loss, sgd_on_graph, Autograd};
-use petgraph::visit::{EdgeRef, IntoEdgeReferences, IntoNodeReferences};
+use tracing::info;
 
 use crate::scalar::copy_graph_roughly;
 
-const FILE_PATH: &str = "data/rp.data";
+// const FILE_PATH: &str = "data/rp.data";
 
 pub type InputsVec = Vec<[f32; 9]>;
 pub type OutputsVec = Vec<f32>;
@@ -118,10 +116,34 @@ pub struct TrainedGraph {
   pub graph: Graph,
   pub input_id: NodeIndex,
   pub weights: Vec<(NodeIndex, Vec<f32>)>,
-  // pub model: Model,
+  // below are needed to evaluate the model:
+  pub target_id: NodeIndex, // needed for evaluation, mostly tests
+  pub cx: Graph,            // full trained graph, the above "graph" is a rough copy
+  pub output_id: NodeIndex,
 }
 
-pub fn run_model(train_params: TrainParams) -> (Graph, Model, TrainedGraph) {
+// todo: make general
+// impl<I: Shape, M : Module<GraphTensor<I>>>
+impl TrainedGraph {
+  pub fn evaluate(&mut self, input_data: Vec<f32>) -> Vec<f32> {
+    self.cx.get_op_mut::<Function>(self.input_id).1 =
+      Box::new(move |_| vec![Tensor::new(input_data.to_owned())]);
+    self.cx.get_op_mut::<Function>(self.target_id).1 =
+      Box::new(move |_| vec![Tensor::new(vec![0.0])]); // doesnt matter
+    self.cx.execute();
+    let d = self
+      .cx
+      .get_tensor_ref(self.output_id, 0)
+      .unwrap()
+      .clone()
+      .downcast_ref::<Vec<f32>>()
+      .unwrap()
+      .clone();
+    d
+  }
+}
+
+pub fn run_model(train_params: TrainParams) -> TrainedGraph {
   let dataset: (InputsVec, OutputsVec) = train_params.data;
   let EPOCHS = train_params.epochs;
   // Setup gradient graph
@@ -130,9 +152,10 @@ pub fn run_model(train_params: TrainParams) -> (Graph, Model, TrainedGraph) {
   let input = cx.tensor::<R1<9>>();
   let output = model.forward(input).retrieve();
 
-  cx.display();
+  // cx.display();
   // record graph without gradients. assuming nodeids dont change in Autograd::compile
   let cx_og = copy_graph_roughly(&cx);
+  let input_id = input.id;
 
   let target = cx.tensor::<R1<1>>();
   let loss = mse_loss(output, target).retrieve();
@@ -185,7 +208,7 @@ pub fn run_model(train_params: TrainParams) -> (Graph, Model, TrainedGraph) {
     start.elapsed().as_secs_f32(),
     start.elapsed().as_micros() / iter
   );
-  cx.display();
+  // cx.display();
   let weights_vec = weights
     .into_iter()
     .map(|a| {
@@ -202,16 +225,15 @@ pub fn run_model(train_params: TrainParams) -> (Graph, Model, TrainedGraph) {
       )
     })
     .collect();
-  (
+  assert!(input_id == input.id);
+  TrainedGraph {
     cx,
-    model,
-    TrainedGraph {
-      graph: cx_og,
-      input_id: input.id,
-      weights: weights_vec,
-      // model: model.clone()
-    },
-  )
+    graph: cx_og,
+    input_id: input_id,
+    output_id: output.id,
+    target_id: target.id,
+    weights: weights_vec,
+  }
 }
 
 pub struct ExponentialAverage {

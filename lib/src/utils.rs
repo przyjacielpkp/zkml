@@ -4,8 +4,8 @@ use human_panic::setup_panic;
 #[cfg(debug_assertions)]
 extern crate better_panic;
 
-use tracing::subscriber::{self, SetGlobalDefaultError};
-use tracing_subscriber::{self, fmt, layer::SubscriberExt};
+use tracing::subscriber::{DefaultGuard, SetGlobalDefaultError};
+use tracing_subscriber::{self};
 
 // [NOTE] tracing
 //
@@ -58,4 +58,26 @@ pub fn init_logging() -> Result<(), SetGlobalDefaultError> {
   install_logger()?;
 
   Ok(())
+}
+
+pub fn init_logging_tests() -> DefaultGuard {
+  // Human Panic. Only enabled when *not* debugging.
+  #[cfg(not(debug_assertions))]
+  {
+    setup_panic!();
+  }
+
+  // Better Panic. Only enabled *when* debugging.
+  #[cfg(debug_assertions)]
+  {
+    better_panic::Settings::debug()
+      .most_recent_first(false)
+      .lineno_suffix(true)
+      .verbosity(better_panic::Verbosity::Full)
+      .install();
+  }
+
+  let subscriber = tracing_subscriber::fmt().compact();
+  let subscriber = subscriber.finish();
+  tracing::subscriber::set_default(subscriber)
 }
