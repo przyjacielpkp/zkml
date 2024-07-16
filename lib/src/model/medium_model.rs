@@ -113,6 +113,7 @@ pub struct TrainParams {
   // pub model: Model,
 }
 
+#[derive(Debug)]
 pub struct TrainedGraph {
   pub graph: Graph,
   pub input_id: NodeIndex,
@@ -142,19 +143,6 @@ pub fn run_model(train_params: TrainParams) -> (Graph, Model, TrainedGraph) {
   cx.keep_tensors(&new_weights);
   cx.keep_tensors(&weights);
   lr.set(5e-3);
-
-  // #[cfg(all(not(feature = "metal"), not(feature = "cuda")))]
-  // cx.compile(
-  //   GenericCompiler::default(),
-  //   (
-  //     &mut input,
-  //     &mut target,
-  //     &mut loss,
-  //     &mut output,
-  //     &mut weights,
-  //     &mut new_weights,
-  //   ),
-  // );
 
   let (mut loss_avg, mut acc_avg) = (ExponentialAverage::new(1.0), ExponentialAverage::new(0.0));
   let start = std::time::Instant::now();
@@ -234,7 +222,7 @@ pub struct ExponentialAverage {
 }
 
 impl ExponentialAverage {
-  fn new(initial: f32) -> Self {
+  pub fn new(initial: f32) -> Self {
     ExponentialAverage {
       beta: 0.999,
       moment: 0.,

@@ -1,10 +1,10 @@
 #[cfg(not(debug_assertions))]
 use human_panic::setup_panic;
-use tracing::subscriber::{self, SetGlobalDefaultError};
 
 #[cfg(debug_assertions)]
 extern crate better_panic;
 
+use tracing::subscriber::{self, SetGlobalDefaultError};
 use tracing_subscriber::{self, fmt, layer::SubscriberExt};
 
 // [NOTE] tracing

@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, vec};
 
 use itertools::Itertools;
 use luminal::prelude::NodeIndex;
 use model::{get_weights, Model, TrainedGraph};
 use scalar::{scalar, InputsTracker};
-use snark::{MLSnark, SourceMap, SourceType};
+use snark::{CircuitField, MLSnark, SourceMap, SourceType};
 use tracing::{error, info};
 
 // #![feature(ascii_char)]
@@ -25,7 +25,7 @@ pub mod utils;
 pub const SCALE: usize = 1000000;
 
 /// Main crate export. Take a tensor computation and rewrite to snark.
-pub fn compile(c: TrainedGraph) -> MLSnark {
+pub fn compile(c: TrainedGraph) -> MLSnark<CircuitField> {
   // We set here the weights already. Set input with ::set_input.
   let sc = scalar(c.graph);
   let mut source_map = HashMap::new();
@@ -54,6 +54,7 @@ pub fn compile(c: TrainedGraph) -> MLSnark {
     scale: SCALE,
     source_map: source_map,
     og_input_id: c.input_id,
+    recorded_public_inputs : vec![],
   }
 }
 
@@ -70,12 +71,13 @@ mod tests {
   use ark_bls12_381::Bls12_381;
   use ark_groth16::Groth16;
   use ark_snark::SNARK;
+use tracing::info;
 
   use crate::{
     compile,
-    model::{parse_dataset, run_model, TrainParams},
-    snark::{CircuitField, MLSnark},
-    utils,
+    model::{parse_dataset, TrainParams},
+    snark::{scaled_float, CircuitField},
+    utils, SCALE,
   };
 
   #[test]
@@ -83,15 +85,17 @@ mod tests {
     utils::init_logging().unwrap();
     let err = |e| format!("{:?}", e).to_string();
     let data = parse_dataset(include_str!("../../data/rp.data").to_string());
-    let (_, _model, trained_model) = crate::model::run_model(TrainParams { data, epochs: 1 });
+    let (_, _model, trained_model) = crate::model::tiny_model::run_model(TrainParams { data, epochs: 1 });
+    let we = trained_model.weights.clone();
     let mut snark = compile(trained_model);
     let (pk, vk) = snark.make_keys().map_err(err)?;
     // set input
     snark.set_input(vec![0.0; 9]);
     let proof = snark.make_proof(&pk).map_err(err)?;
-    let verified = Groth16::<Bls12_381>::verify(&vk, &[CircuitField::from(73)], &proof);
+    let public_inputs = snark.recorded_public_inputs;
+    let verified = Groth16::<Bls12_381>::verify(&vk, &public_inputs, &proof);
     println!("{:?}", verified);
-    // assert!(.unwrap());
+    assert!(verified == Ok(true));
     Ok(())
   }
 }

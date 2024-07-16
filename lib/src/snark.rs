@@ -30,7 +30,7 @@ use luminal::{
     NodeIndex,
   },
 };
-use tracing::{info, instrument, warn};
+use tracing::{instrument, warn};
 
 use crate::scalar::ConstantOp;
 use crate::scalar::InputOp;
@@ -77,7 +77,7 @@ impl<F: From<u128>> SourceType<F> {
   }
 }
 
-fn scaled_float<F: From<u128>>(x: f32, scale: usize) -> F {
+pub fn scaled_float<F: From<u128>>(x: f32, scale: usize) -> F {
   let y: u128 = (x * (scale as f32)).round() as u128;
   F::from(y)
 }
@@ -111,7 +111,7 @@ pub type CircuitField = ark_bls12_381::Fr;
 /// and then snark synthesis would rewrite Div_int to a similar circuit as above.
 ///
 #[derive(Debug)]
-pub struct MLSnark {
+pub struct MLSnark<F> {
   pub graph: ScalarGraph,
   // start here
   pub scale: usize,
@@ -120,11 +120,16 @@ pub struct MLSnark {
   // for convenience
   pub og_input_id: NodeIndex,
   // pub inputs_tracker : InputsTracker
+
+  // this is needed due to some redundancy in how public inputs need to be passed to verify.
+  // this field is filled up while calling SynthesizeSnark with assignments given to public inputs in order.
+  // The few last elements record the result of the circuit, last element if single output.
+  pub recorded_public_inputs : Vec<F>
 }
 
 pub type SourceMap = HashMap<NodeIndex, SourceType<f32>>;
 
-impl MLSnark {
+impl MLSnark<CircuitField> {
   pub fn set_input(&mut self, value: Vec<f32>) {
     set_input(
       &mut self.source_map,
@@ -135,7 +140,7 @@ impl MLSnark {
   }
 
   pub fn make_keys(
-    &self,
+    &mut self,
   ) -> Result<(ProvingKey<Bls12_381>, VerifyingKey<Bls12_381>), SynthesisError> {
     // let cloned = MLSnark {
     //   graph: self.graph.copy_graph_roughly(),
@@ -149,7 +154,7 @@ impl MLSnark {
   }
 
   // first provide all inputs with the set_input method, otherwise SynthesisError
-  pub fn make_proof(&self, pk: &ProvingKey<Bls12_381>) -> Result<Proof<Bls12_381>, SynthesisError> {
+  pub fn make_proof(&mut self, pk: &ProvingKey<Bls12_381>) -> Result<Proof<Bls12_381>, SynthesisError> {
     let rng = &mut ark_std::test_rng();
     // let cloned = MLSnark {
     //   graph: self.graph.copy_graph_roughly(),
@@ -171,7 +176,7 @@ fn set_input(source_map: &mut SourceMap, tracker: &InputsTracker, id: NodeIndex,
   }
 }
 
-impl ConstraintSynthesizer<CircuitField> for &MLSnark {
+impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
   // THIS-WORKS
 
   #[instrument(level = "debug", name = "generate_constraints")]
@@ -195,6 +200,14 @@ impl ConstraintSynthesizer<CircuitField> for &MLSnark {
         (k, v)
       })
       .collect();
+    let mut public_record = vec![];
+
+    // return public input variable and assignment but also record it in the map
+    let mut mk_public_input = |n| {
+      public_record.push(n);
+      let v = cs.new_input_variable(|| Ok(n))?;
+      Ok((v , Some(n)))
+    };
 
     let pi = petgraph::algo::toposort(&graph.graph, None).unwrap();
     let mut vars: HashMap<NodeIndex, ark_relations::r1cs::Variable> = HashMap::new();
@@ -222,7 +235,7 @@ impl ConstraintSynthesizer<CircuitField> for &MLSnark {
               .downcast_ref::<ConstantOp>()
               .unwrap();
             let n = scaled_float(constant_op.val, scale);
-            (cs.new_input_variable(|| Ok(n))?, Some(n))
+            mk_public_input(n)?
           } else if graph.check_node_type::<InputOp>(x) {
             let src_ty = source_map
               .get(&x)
@@ -233,7 +246,9 @@ impl ConstraintSynthesizer<CircuitField> for &MLSnark {
                 cs.new_witness_variable(|| mn.ok_or(SynthesisError::AssignmentMissing))?,
                 mn.clone(),
               ),
-              Public(n) => (cs.new_input_variable(|| Ok(*n))?, Some(*n)),
+              Public(n) =>
+                mk_public_input(*n)?
+              ,
             }
           } else {
             panic!(
@@ -330,6 +345,7 @@ impl ConstraintSynthesizer<CircuitField> for &MLSnark {
       vars.insert(x, v);
       assignments.insert(x, ass);
     }
+    self.recorded_public_inputs = public_record;
     Ok(())
   }
 }

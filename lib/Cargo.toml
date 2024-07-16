@@ -20,6 +20,7 @@ itertools = "0.13.0"
 dfdx = "0.13.0"            # maybe completely unneeded
 rand = "0.8.5"
 better-panic = "0.2.0"
+human-panic = "2.0.0"
 petgraph-graphml = "3.0.0"
 
 # arkworks
