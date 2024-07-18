@@ -9,13 +9,12 @@ use ark_groth16::Proof;
 use ark_groth16::ProvingKey;
 use ark_groth16::VerifyingKey;
 use ark_r1cs_std::fields::fp::FpVar;
-use ark_r1cs_std::{boolean::Boolean, fields::fp::AllocatedFp, R1CSVar};
+use ark_r1cs_std::fields::fp::AllocatedFp;
 use ark_relations::{
   lc,
   r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError},
 };
 use ark_snark::SNARK;
-use ark_std::cmp::Ordering::Less;
 use itertools::Itertools;
 
 use luminal::prelude::petgraph::Direction::Outgoing;
@@ -36,14 +35,15 @@ use crate::scalar::ConstantOp;
 use crate::scalar::InputOp;
 // use crate::model::copy_graph_roughly;
 use crate::scalar::{InputsTracker, ScalarGraph};
+use crate::ScaleT;
 
 /// Tensor computation is initialized by setting input tensors data and then evaluating.
 /// This function takes a mapping from input index to its tensor and creates a
 /// mapping useful for the snark synthesis where input nodes are mapped to scalar values
 /// using the given mapping from big tensor input nodes to little scalar input nodes.
-pub fn snark_input_mapping<F: From<i64>>(
+pub fn snark_input_mapping<F: From<i128>>(
   assignment: HashMap<NodeIndex, Option<Vec<f32>>>,
-  scale: usize,
+  scale: ScaleT,
   inputs_tracker: InputsTracker,
 ) -> HashMap<NodeIndex, SourceType<F>> {
   let mut result = HashMap::new();
@@ -68,18 +68,27 @@ pub enum SourceType<F> {
   Public(F),
 }
 
-impl<F: From<i64>> SourceType<F> {
-  pub fn scaled_private(x: f32, scale: usize) -> Self {
+impl<F: From<i128>> SourceType<F> {
+  pub fn scaled_private(x: f32, scale: ScaleT) -> Self {
     SourceType::Private(Some(scaled_float(x, scale)))
   }
-  pub fn scaled_public(x: f32, scale: usize) -> Self {
+  pub fn scaled_public(x: f32, scale: ScaleT) -> Self {
     SourceType::Public(scaled_float(x, scale))
   }
 }
 
-pub fn scaled_float<F: From<i64>>(x: f32, scale: usize) -> F {
-  let y: i64 = (x * (scale as f32)).round() as i64;
+pub fn scaled_float<F: From<i128>>(x: f32, scale: ScaleT) -> F {
+  // let y = (x. << f32::MANTISSA_DIGITS);
+  let x : f64 = x.into();
+  let s : f64 = scale as f64;
+  let y: i128 = (x * s).round() as i128;
   F::from(y)
+
+  // let x : f64 = x. .into();
+  // let s : f64 = scale as f64;
+  // let y: i128 = (x * s).round() as i128;
+  // tracing::info!("scaled_float: x={:?}, s={:?}, y={:?}", x, s, y);
+  // F::from(y)
 }
 
 // pub fn unscaled_field(f: CircuitField, scale: usize) -> f32 {
@@ -119,7 +128,7 @@ pub type CircuitField = ark_bls12_381::Fr;
 pub struct MLSnark<F> {
   pub graph: ScalarGraph,
   // start here
-  pub scale: usize,
+  pub scale: ScaleT,
   // pub private_inputs: HashMap<NodeIndex, Option<Vec<f32>>>,
   pub source_map: HashMap<NodeIndex, SourceType<f32>>,
   // for convenience
@@ -153,12 +162,6 @@ impl MLSnark<CircuitField> {
   pub fn make_keys(
     &mut self,
   ) -> Result<(ProvingKey<Bls12_381>, VerifyingKey<Bls12_381>), SynthesisError> {
-    // let cloned = MLSnark {
-    //   graph: self.graph.copy_graph_roughly(),
-    //   scale: self.scale,
-    //   source_map: self.source_map.clone(),
-    //   og_input_id: self.og_input_id,
-    // };
     let rng = &mut ark_std::test_rng();
     // generate the setup parameters
     Groth16::<Bls12_381>::circuit_specific_setup(self, rng)
@@ -191,7 +194,6 @@ fn set_input(source_map: &mut SourceMap, tracker: &InputsTracker, id: NodeIndex,
 }
 
 impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
-  // THIS-WORKS
 
   #[instrument(level = "debug", name = "generate_constraints")]
   fn generate_constraints(
@@ -200,7 +202,7 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
   ) -> Result<(), SynthesisError> {
     let graph = &self.graph.graph;
     let scale = self.scale;
-    let scale_f = CircuitField::from(scale as u128);
+    let scale_f: CircuitField = scaled_float(1.0, scale);
     let source_map: HashMap<NodeIndex, SourceType<CircuitField>> = self
       .source_map
       .clone()
@@ -334,19 +336,63 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
             )?;
             (v, ass)
           } else if graph.check_node_type::<LessThan>(x) {
-            // using the interface from r1cs_std here:
-            let lll = FpVar::<Fr>::Var(AllocatedFp::new(ll_val, ll, cs.clone()));
-            let rrr = FpVar::<Fr>::Var(AllocatedFp::new(ll_val, rr, cs.clone()));
-            lll.enforce_cmp(&rrr, Less, false)?;
+            // witness assignments:
+            //   x, y <- if l < r then (l, r) else (r, l)
+            //   lt   <- (l < r)
+            //
+            // enforce:
+            //    x = lt * l  + (1 - lt) * r          // x - r = lt * (l - r)
+            //    y = lt * r  + (1 - lt) * l          // y - l = lt * (r - l)
+            //    lt = 0 or 1                         // (lt - 1) * lt == 0
+            //    x < y
+            //
+            // then lt_scaled = lt * scale_F
 
-            let ass = || {
-              lll.is_cmp(&rrr, Less, false).and_then(|is_cmp|
-                // !!! so here remember that 1 is scale_f
-                Boolean::<CircuitField>::le_bits_to_fp_var(&vec![is_cmp])?
-                .value().map(|x| x * scale_f))
+            let lr: Option<(_, _)> = ll_val
+              .and_then(|l| rr_val.map(|r| (l, r)));
+            let lt_ass_bool = lr.map(|(l, r)|  l < r );
+            let lt_ass = lt_ass_bool.map(|b| if b {CircuitField::from(1 as i64)} else {CircuitField::zero()});
+
+            let make_xy = |noneg| {
+              let ass = lt_ass_bool.and_then(|b| lr.map(|(l, r)|
+                if (if noneg {b} else {! b}) {l} else {r}));  // this can be written like above equation but is maybe faster
+              Ok((cs.new_witness_variable(|| ass.ok_or(SynthesisError::AssignmentMissing))?, ass))
             };
-            let ret = cs.new_witness_variable(ass)?;
-            (ret, ass().ok())
+            let (x, x_val) = make_xy(true)?;
+            let (y, y_val) = make_xy(false)?;
+            let lt = cs.new_witness_variable(|| lt_ass.ok_or(SynthesisError::AssignmentMissing))?;
+
+            cs.enforce_constraint(
+              lc!() + lt,
+              lc!() + ll - rr,
+              lc!() + x - rr
+            )?;
+            cs.enforce_constraint(
+              lc!() + lt,
+              lc!() + rr - ll,
+              lc!() + y - ll
+            )?;
+            // todo: uncomment
+            // cs.enforce_constraint(
+            //   lc!() + lt,
+            //   lc!() + ConstraintSystem::<CircuitField>::one() - lt,
+            //   lc!() + ConstraintSystem::<CircuitField>::zero()
+            // )?;
+
+            // using the interface from r1cs_std here:
+            let xxx = FpVar::<Fr>::Var(AllocatedFp::new(x_val, x, cs.clone()));
+            let yyy = FpVar::<Fr>::Var(AllocatedFp::new(y_val, y, cs.clone()));
+            // xxx.enforce_cmp(&yyy, Less, false)?;
+            
+            let lt_scaled_ass = lt_ass.map(|lt| lt * scale_f);
+            let lt_scaled = cs.new_witness_variable(|| lt_scaled_ass.ok_or(SynthesisError::AssignmentMissing))?;
+            cs.enforce_constraint(
+              lc!() + lt,
+              lc!() + (scale_f, ConstraintSystem::<CircuitField>::one()),
+              lc!() + lt_scaled,
+            )?;
+
+            (lt_scaled, lt_scaled_ass)
           } else {
             panic!("Unsupported binop")
           }
@@ -356,6 +402,7 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
       };
       vars.insert(x, v);
       assignments.insert(x, ass);
+      tracing::info!("{:?}: {:?} = {:?}", x, v, ass);
 
       // if the node is a result node (a sink), assert its value against a public input.
       // we can do that only when creating the proof and having the private inputs,
@@ -376,4 +423,43 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
     self.recorded_public_inputs = public_record;
     Ok(())
   }
+}
+
+pub fn field_elems_close(a : CircuitField , b : CircuitField, scale: ScaleT) -> bool {
+  (a - b).square().le(
+    & ( (a.square() + b.square()) * scaled_float::<CircuitField>(0.01, scale) ) )  
+}
+
+mod tests {
+    // use ark_ff::PrimeField;
+    // use quickcheck::quickcheck;
+    use proptest::prelude::*;
+    use proptest::num::f32::{POSITIVE, NEGATIVE};
+    use std::ops::Div;
+    use crate::snark::{field_elems_close, scaled_float, CircuitField};
+    use crate::SCALE;
+
+  proptest! {
+
+    #[test]
+    fn test_scaling_is_mul_homo(a in -10e15..10e15f64, b in -10e15..10e15f64) {
+      let scope = crate::utils::init_logging_tests();
+      let a: f32 = a as f32;
+      let b: f32 = b as f32;
+      let scale = SCALE;
+      let a_m_b = a*b;
+      let scale_f: CircuitField = scaled_float(1.0, scale);
+      let a_m_b_f : CircuitField = scaled_float(a_m_b, scale);
+      let a_f : CircuitField = scaled_float(a, scale);
+      let b_f : CircuitField = scaled_float(b, scale);
+      let a_f_m_b_f = a_f * b_f;
+      let a_f_m_b_f_d_s: CircuitField = (a_f * b_f).div(scale_f);
+      let diff = field_elems_close(a_f_m_b_f_d_s , a_m_b_f, scale);
+      tracing::info!("bool={:?}, a*b={:?}, a_f={:?}, b_f={:?}, a_f*b_f={:?}, (a_f*b_f)/s_f={:?}, (a*b)_f={:?}", 
+        diff, a_m_b, a_f, b_f, a_f_m_b_f, a_f_m_b_f_d_s, a_m_b_f);
+      prop_assert!(diff, "scaled(a * b) == scaled(a) * scaled(b) / scale");
+      drop(scope);
+    }
+  }
+
 }

@@ -423,24 +423,12 @@ impl Compiler for Scalarize {
         }
       } else if let Some((yy,)) = incoming.iter().collect_tuple() {
         if graph.check_node_type::<Recip>(x) {
-          // same as Add but unop
-          // TODO: this works right???
           pointwise_op(Recip {}, x, size, &incoming, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<SumReduce>(x) {
-          let ax: &SumReduce = graph
-            .node_weight(x)
-            .unwrap()
-            .as_any()
-            .downcast_ref()
-            .unwrap();
+          let ax: &SumReduce = graph.node_weight(x).unwrap().as_any().downcast_ref().unwrap();
           reduce_op(Add {}, 0.0, x, size, ax.0, yy, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<MaxReduce>(x) {
-          let ax: &MaxReduce = graph
-            .node_weight(x)
-            .unwrap()
-            .as_any()
-            .downcast_ref()
-            .unwrap();
+          let ax: &MaxReduce = graph.node_weight(x).unwrap().as_any().downcast_ref().unwrap();
           reduce_op(Max {}, 1.0, x, size, ax.0, yy, &mut edge_src_indices, graph)
         } else {
           panic!("Unsupported unop OP")
@@ -456,14 +444,7 @@ impl Compiler for Scalarize {
           pointwise_op(Mul {}, x, size, &incoming, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<LessThan>(x) {
           debug!("LessThan {:?} {:?}", ll, rr);
-          pointwise_op(
-            LessThan {},
-            x,
-            size,
-            &incoming,
-            &mut edge_src_indices,
-            graph,
-          )
+          pointwise_op(LessThan {}, x, size, &incoming, &mut edge_src_indices, graph)
         } else {
           todo!("Unsupported yet binop!") // are there any other binops we need?
         }

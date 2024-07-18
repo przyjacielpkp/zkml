@@ -19,7 +19,9 @@ pub mod scalar;
 pub mod snark;
 pub mod utils;
 
-pub const SCALE: usize = 1000000;
+pub type ScaleT = u64;
+pub const SCALE: ScaleT = (2 as u64).pow(f32::MANTISSA_DIGITS);
+// pub const SCALE: ScaleT = 100000;
 
 /// Main crate export. Take a tensor computation and rewrite to snark.
 pub fn compile(c: &TrainedGraph) -> MLSnark<CircuitField> {
@@ -64,7 +66,6 @@ mod tests {
     compile,
     model::{parse_dataset, TrainParams, TrainedGraph},
     snark::{scaled_float, CircuitField},
-    utils::init_logging_tests,
     SCALE,
   };
   use ark_bls12_381::Bls12_381;
@@ -97,6 +98,8 @@ mod tests {
     let snark_eval_result = snark.get_evaluation_result(); // this really just is public_inputs[-1], a publicly known result of the circuit
     let model_eval_res_float = trained_model.evaluate(input)[0];
     let model_eval_result: CircuitField = scaled_float(model_eval_res_float, SCALE);
+    tracing::info!("{:?} {:?}", snark_eval_result, model_eval_result);
+
     let diff = (snark_eval_result - model_eval_result)
       .square()
       .le(&scaled_float(0.01, SCALE));
@@ -154,9 +157,18 @@ mod tests {
     test_trained_into_snark(trained_model, input)
   }
 
-  #[ignore = "runs for too long"]
   #[test]
   pub fn test_trained_into_snark_4() -> Result<(), String> {
+    tracing::info!("linear layer into ReLU, data C");
+    let data = parse_dataset(include_str!("../../data/rp.data").to_string());
+    let trained_model = crate::model::lessthan_model::run_model(TrainParams { data, epochs: 1 });
+    let input: Vec<f32> = [1.001231212412512, 0.3141512, 8910395712741e-10, 136213e12, 7819421e-4, 71289401e18, 9801721e-14, 0.763612199124, 0.12199124].to_vec();
+    test_trained_into_snark(trained_model, input)
+  }
+
+  #[ignore = "runs for too long"]
+  #[test]
+  pub fn test_trained_into_snark_5() -> Result<(), String> {
     let data = parse_dataset(include_str!("../../data/rp.data").to_string());
     let trained_model = crate::model::medium_model::run_model(TrainParams { data, epochs: 1 });
     let input = (0..9).map(|x| f32::from(x as i16)).collect_vec();

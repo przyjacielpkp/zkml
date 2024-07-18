@@ -20,17 +20,13 @@ debug-assertions = false
 codegen-units = 1
 
 [profile.test]
-opt-level = 1
+opt-level = 3
 debug = true
 rpath = false
 lto = false
 debug-assertions = true
 codegen-units = 4
-
-[profile.bench]
+[profile.test.package.proptest]
 opt-level = 3
-debug = false
-rpath = false
-lto = true
-debug-assertions = false
-codegen-units = 1
+[profile.test.package.rand_chacha]
+opt-level = 3

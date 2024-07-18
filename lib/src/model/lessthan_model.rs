@@ -20,10 +20,21 @@ pub fn run_model(train_params: TrainParams) -> TrainedGraph {
   // Setup gradient graph
   let mut cx = Graph::new();
   let model = <Model>::initialize(&mut cx);
-  let input = cx.tensor::<R1<9>>();
-  let output = model.forward(input).retrieve();
+  let mut input = cx.tensor::<R1<9>>();
+  let mut output = model.forward(input).retrieve();
+
+  // todo: remove x=n
+  // cx.display();
+  // cx.compile(
+  //   GenericCompiler::default(),
+  //   (
+  //     &mut input,
+  //     &mut output,
+  //   ),
+  // );
 
   // cx.display();
+  // cx.display_shapes();
   // record graph without gradients. assuming nodeids dont change in Autograd::compile
   let cx_og = copy_graph_roughly(&cx);
 

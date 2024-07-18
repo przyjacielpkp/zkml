@@ -22,6 +22,8 @@ rand = "0.8.5"
 better-panic = "0.2.0"
 human-panic = "2.0.0"
 petgraph-graphml = "3.0.0"
+# quickcheck = "1.0.3" # float tests
+proptest = "1.5.0"
 
 # arkworks
 ark-std = { version = "^0.3.0", default-features = false }
