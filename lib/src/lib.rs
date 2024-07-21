@@ -1,3 +1,5 @@
+#![feature(option_zip)]
+
 use std::{collections::HashMap, vec};
 
 use model::TrainedGraph;
@@ -19,9 +21,14 @@ pub mod scalar;
 pub mod snark;
 pub mod utils;
 
-pub type ScaleT = u64;
-pub const SCALE: ScaleT = (2 as u64).pow(f32::MANTISSA_DIGITS);
-// pub const SCALE: ScaleT = 100000;
+// pub type ScaleT = u64;
+#[derive(Debug, Clone, Copy)]
+pub struct ScaleT {
+  s : u128,
+  z : u128
+}
+
+pub const SCALE: ScaleT = ScaleT {s : 1_000, z : u128::MAX << 1 /* ~ 1e38 */}; // giving float range from about -1e33 to 1e33
 
 /// Main crate export. Take a tensor computation and rewrite to snark.
 pub fn compile(c: &TrainedGraph) -> MLSnark<CircuitField> {
@@ -65,7 +72,7 @@ mod tests {
   use crate::{
     compile,
     model::{parse_dataset, TrainParams, TrainedGraph},
-    snark::{scaled_float, CircuitField},
+    snark::{f_from_bigint_unsafe, field_close_as_floats, field_elems_close, scaled_float, CircuitField},
     SCALE,
   };
   use ark_bls12_381::Bls12_381;
@@ -97,12 +104,12 @@ mod tests {
     // God: and compare the results obtained
     let snark_eval_result = snark.get_evaluation_result(); // this really just is public_inputs[-1], a publicly known result of the circuit
     let model_eval_res_float = trained_model.evaluate(input)[0];
-    let model_eval_result: CircuitField = scaled_float(model_eval_res_float, SCALE);
+    let model_eval_result: CircuitField = f_from_bigint_unsafe(scaled_float(model_eval_res_float, &SCALE));
     tracing::info!("{:?} {:?}", snark_eval_result, model_eval_result);
 
-    let diff = (snark_eval_result - model_eval_result)
-      .square()
-      .le(&scaled_float(0.01, SCALE));
+    let diff = field_close_as_floats(snark_eval_result, model_eval_result, &SCALE);
+      // .square()
+      // .le(&scaled_float(0.01, &SCALE));
 
     assert!(verified == Ok(true), "Proof is verified");
     assert!(
@@ -142,7 +149,7 @@ mod tests {
     // see the model shape at https://dreampuf.github.io/GraphvizOnline/#digraph%20%7B%0A%20%20%20%200%20%5B%20label%20%3D%20%22Weight%20Load%20%7C%200%22%20%5D%0A%20%20%20%201%20%5B%20label%20%3D%20%22Weight%20Load%20%7C%201%22%20%5D%0A%20%20%20%202%20%5B%20label%20%3D%20%22Tensor%20Load%20%7C%202%22%20%5D%0A%20%20%20%203%20%5B%20label%20%3D%20%22Mul%20%7C%203%22%20%5D%0A%20%20%20%204%20%5B%20label%20%3D%20%22SumReduce(2)%20%7C%204%22%20%5D%0A%20%20%20%205%20%5B%20label%20%3D%20%22Constant(0.0)%20%7C%205%22%20%5D%0A%20%20%20%206%20%5B%20label%20%3D%20%22LessThan%20%7C%206%22%20%5D%0A%20%20%20%207%20%5B%20label%20%3D%20%22Mul%20%7C%207%22%20%5D%0A%20%20%20%208%20%5B%20label%20%3D%20%22LessThan%20%7C%208%22%20%5D%0A%20%20%20%209%20%5B%20label%20%3D%20%22Constant(-1.0)%20%7C%209%22%20%5D%0A%20%20%20%2010%20%5B%20label%20%3D%20%22Mul%20%7C%2010%22%20%5D%0A%20%20%20%2011%20%5B%20label%20%3D%20%22Constant(1.0)%20%7C%2011%22%20%5D%0A%20%20%20%2012%20%5B%20label%20%3D%20%22Add%20%7C%2012%22%20%5D%0A%20%20%20%2013%20%5B%20label%20%3D%20%22Mul%20%7C%2013%22%20%5D%0A%20%20%20%2014%20%5B%20label%20%3D%20%22Add%20%7C%2014%22%20%5D%0A%20%20%20%2015%20%5B%20label%20%3D%20%22Mul%20%7C%2015%22%20%5D%0A%20%20%20%2016%20%5B%20label%20%3D%20%22SumReduce(2)%20%7C%2016%22%20%5D%0A%20%20%20%200%20-%3E%203%20%5B%20%20%5D%0A%20%20%20%201%20-%3E%2015%20%5B%20%20%5D%0A%20%20%20%202%20-%3E%203%20%5B%20%20%5D%0A%20%20%20%203%20-%3E%204%20%5B%20%20%5D%0A%20%20%20%204%20-%3E%208%20%5B%20%20%5D%0A%20%20%20%204%20-%3E%206%20%5B%20%20%5D%0A%20%20%20%204%20-%3E%2013%20%5B%20%20%5D%0A%20%20%20%205%20-%3E%208%20%5B%20%20%5D%0A%20%20%20%205%20-%3E%207%20%5B%20%20%5D%0A%20%20%20%205%20-%3E%206%20%5B%20%20%5D%0A%20%20%20%206%20-%3E%207%20%5B%20%20%5D%0A%20%20%20%207%20-%3E%2014%20%5B%20%20%5D%0A%20%20%20%208%20-%3E%2010%20%5B%20%20%5D%0A%20%20%20%209%20-%3E%2010%20%5B%20%20%5D%0A%20%20%20%2010%20-%3E%2012%20%5B%20%20%5D%0A%20%20%20%2011%20-%3E%2012%20%5B%20%20%5D%0A%20%20%20%2012%20-%3E%2013%20%5B%20%20%5D%0A%20%20%20%2013%20-%3E%2014%20%5B%20%20%5D%0A%20%20%20%2014%20-%3E%2015%20%5B%20%20%5D%0A%20%20%20%2015%20-%3E%2016%20%5B%20%20%5D%0A%7D%0A
     tracing::info!("linear layer into ReLU, data A");
     let data = parse_dataset(include_str!("../../data/rp.data").to_string());
-    let trained_model = crate::model::lessthan_model::run_model(TrainParams { data, epochs: 1 });
+    let trained_model = crate::model::lessthan_model::run_model(TrainParams { data, epochs: 10 });
     let input = (0..9).map(|x| f32::from(x as i16)).collect_vec();
     test_trained_into_snark(trained_model, input)
   }
@@ -152,7 +159,7 @@ mod tests {
   pub fn test_trained_into_snark_3() -> Result<(), String> {
     tracing::info!("linear layer into ReLU, data B");
     let data = parse_dataset(include_str!("../../data/rp.data").to_string());
-    let trained_model = crate::model::lessthan_model::run_model(TrainParams { data, epochs: 1 });
+    let trained_model = crate::model::lessthan_model::run_model(TrainParams { data, epochs: 10 });
     let input = (9..18).map(|x| f32::from(x as i16)).collect_vec();
     test_trained_into_snark(trained_model, input)
   }
@@ -161,7 +168,7 @@ mod tests {
   pub fn test_trained_into_snark_4() -> Result<(), String> {
     tracing::info!("linear layer into ReLU, data C");
     let data = parse_dataset(include_str!("../../data/rp.data").to_string());
-    let trained_model = crate::model::lessthan_model::run_model(TrainParams { data, epochs: 1 });
+    let trained_model = crate::model::lessthan_model::run_model(TrainParams { data, epochs: 10 });
     let input: Vec<f32> = [1.001231212412512, 0.3141512, 8910395712741e-10, 136213e12, 7819421e-4, 71289401e18, 9801721e-14, 0.763612199124, 0.12199124].to_vec();
     test_trained_into_snark(trained_model, input)
   }

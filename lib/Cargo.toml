@@ -24,6 +24,7 @@ human-panic = "2.0.0"
 petgraph-graphml = "3.0.0"
 # quickcheck = "1.0.3" # float tests
 proptest = "1.5.0"
+num-bigint = "0.4.6"
 
 # arkworks
 ark-std = { version = "^0.3.0", default-features = false }
