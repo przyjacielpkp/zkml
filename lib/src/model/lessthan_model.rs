@@ -6,7 +6,7 @@ use luminal_training::{mse_loss, sgd_on_graph, Autograd};
 use tracing::info;
 
 use crate::{
-  model::{normalize_data, split_dataset, ExponentialAverage, InputsVec, OutputsVec},
+  model::{normalize_data, split_dataset, ExponentialAverage, GraphForSnark, InputsVec, OutputsVec},
   scalar::copy_graph_roughly,
 };
 
@@ -25,18 +25,19 @@ pub fn run_model(train_params: TrainParams) -> TrainedGraph {
 
   // todo: remove x=n
   // cx.display();
-  // cx.compile(
-  //   GenericCompiler::default(),
-  //   (
-  //     &mut input,
-  //     &mut output,
-  //   ),
-  // );
+  cx.compile(
+    GenericCompiler::default(),
+    (
+      &mut input,
+      &mut output,
+    ),
+  );
 
   // cx.display();
   // cx.display_shapes();
   // record graph without gradients. assuming nodeids dont change in Autograd::compile
-  let cx_og = copy_graph_roughly(&cx);
+  let (cx_og, remap) = copy_graph_roughly(&cx);
+  let input_id = input.id;
 
   let target = cx.tensor::<R1<1>>();
   let loss = mse_loss(output, target).retrieve();
@@ -95,7 +96,7 @@ pub fn run_model(train_params: TrainParams) -> TrainedGraph {
     .into_iter()
     .map(|a| {
       (
-        a,
+        remap[&a],
         cx.tensors
           .get(&(a, 0 /* assuming single output */))
           .unwrap()
@@ -108,11 +109,14 @@ pub fn run_model(train_params: TrainParams) -> TrainedGraph {
     })
     .collect();
   TrainedGraph {
+    graph : GraphForSnark {
+      graph: cx_og,
+      weights: weights_vec,
+      input_id,
+    },
     cx: cx,
-    graph: cx_og,
-    input_id: input.id,
-    output_id: output.id,
-    target_id: target.id,
-    weights: weights_vec,
+    cx_output_id: output.id,
+    cx_input_id: input.id,
+    cx_target_id: target.id,
   }
 }

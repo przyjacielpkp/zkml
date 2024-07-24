@@ -48,8 +48,9 @@ pub struct ScalarGraph {
 
 impl ScalarGraph {
   pub fn copy_graph_roughly(&self) -> Self {
+    let (g, remap ) = copy_graph_roughly(&self.graph);
     ScalarGraph {
-      graph: copy_graph_roughly(&self.graph),
+      graph: g,
       inputs_tracker: self.inputs_tracker.clone(),
     }
   }
@@ -139,6 +140,17 @@ impl Operator for Max {
 pub struct InputsTracker {
   /// If x was of shape (2, 3) then new_inputs[x] should be a vector of length 6
   pub new_inputs: HashMap<NodeIndex, Vec<NodeIndex>>,
+}
+
+impl InputsTracker {
+  pub fn remap(&self, remap: HashMap<NodeIndex, NodeIndex>) -> Self {
+    let mut m = HashMap::new();
+    for (k, v) in self.new_inputs.iter() {
+      m.insert(*k, v.iter().map(|x| *remap.get(x).unwrap()).collect());
+    }
+    InputsTracker { new_inputs: m }
+  }
+
 }
 
 #[derive(Debug, Default)]
@@ -486,9 +498,9 @@ pub fn pretty_print_g(graph: &Graph) -> Result<(), Box<dyn Error>> {
 
 // copies things that are relevant. very much not exact copy
 // Expects a graph with indices from the [0..n] range without gaps (check the commented lines).
-pub fn copy_graph_roughly(src: &Graph) -> Graph {
+pub fn copy_graph_roughly(src: &Graph) -> (Graph, HashMap<NodeIndex, NodeIndex>) {
   let mut g = Graph::new();
-  // let mut map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+  let mut map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
   // copy nodes
   for x in src.node_indices().sorted() {
     let n = if src.check_node_type::<Add>(x) {
@@ -526,21 +538,21 @@ pub fn copy_graph_roughly(src: &Graph) -> Graph {
         src.node_weight(x).unwrap().type_name()
       )
     };
-    // map.insert(x, n);
-    assert!(x == n)
+    map.insert(x, n);
+    // assert!(x == n)
   }
   // copy edges
   for e in src.edge_references() {
-    g.add_edge(e.source(), e.target(), e.weight().clone());
-    // g.add_edge(map[&e.source()], map[&e.target()], e.weight().clone());
+    // g.add_edge(e.source(), e.target(), e.weight().clone());
+    g.add_edge(map[&e.source()], map[&e.target()], e.weight().clone());
   }
   // copy retrieval marks
   // src.to_retrieve.iter().for_each(|(id, sh)| {g.to_retrieve.insert(map[id], *sh);});
   src.to_retrieve.iter().for_each(|(id, sh)| {
-    g.to_retrieve.insert(*id, *sh);
+    g.to_retrieve.insert(map[id], *sh);
   });
 
-  g
+  (g, map)
 }
 
 #[cfg(test)]

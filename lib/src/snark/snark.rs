@@ -23,6 +23,7 @@ use ark_snark::SNARK;
 use blake2::digest::generic_array::typenum::uint;
 use itertools::Itertools;
 
+use luminal::prelude::petgraph::data::DataMap;
 use luminal::prelude::petgraph::Direction::Outgoing;
 
 ///
@@ -36,7 +37,7 @@ use luminal::{
   },
 };
 use num_bigint::{BigInt, BigUint, ToBigInt};
-use tracing::{instrument, warn};
+use tracing::{info, instrument, warn};
 
 use crate::scalar::ConstantOp;
 use crate::scalar::InputOp;
@@ -517,6 +518,10 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
           panic!("No n-ary ops for n>2")
         }
       };
+
+      // let nd_ty = graph.node_weight(x).unwrap().as_any().type_id();
+      // info!("{:?}: {:?} of {:?}", x, nd_ty, ass.clone().map(|x| unscaled_bigint(x, &scale)));
+
       vars.insert(x, v);
       assignments.insert(x, ass.clone());
 

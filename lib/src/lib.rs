@@ -21,12 +21,15 @@ pub mod scalar;
 pub mod snark;
 pub mod utils;
 
-pub const SCALE: ScaleT = ScaleT {s : 1_000, z : u128::MAX << 1 /* ~ 1e38 */}; // giving float range from about -1e33 to 1e33
+pub const SCALE: ScaleT = ScaleT {s : 1_000_000, z : u128::MAX << 1 /* ~ 1e38 */}; // giving float range from about -1e29 to 1e29
 
 /// Main crate export. Take a tensor computation and rewrite to snark.
 pub fn compile(c: &TrainedGraph) -> MLSnark<CircuitField> {
-  let graph = copy_graph_roughly(&c.graph);
-  let weights = c.weights.clone();
+  let graph_for_snark  = c.graph.copy_graph_roughly();
+  let graph = graph_for_snark.graph;
+  let weights = graph_for_snark.weights;
+  let input_id = graph_for_snark.input_id;
+  // let weights = c.weights.clone();
   // We set here the weights already. Set input with ::set_input.
   let sc = scalar(graph);
   let mut source_map = HashMap::new();
@@ -45,7 +48,7 @@ pub fn compile(c: &TrainedGraph) -> MLSnark<CircuitField> {
   let little_ids = sc
     .inputs_tracker
     .new_inputs
-    .get(&c.input_id)
+    .get(&input_id)
     .unwrap_or_else(|| panic!("Wrong input id"));
   for little_id in little_ids.into_iter() {
     source_map.insert(*little_id, SourceType::Private(None));
@@ -54,7 +57,7 @@ pub fn compile(c: &TrainedGraph) -> MLSnark<CircuitField> {
     graph: sc,
     scale: SCALE,
     source_map: source_map,
-    og_input_id: c.input_id,
+    og_input_id: input_id,
     recorded_public_inputs: vec![],
   }
 }
@@ -106,7 +109,7 @@ mod tests {
       diff,
       "The snark evaluates to the correct result (~ float precision)"
     );
-    tracing::info!("evaluated the model to {:?}, which is represented by a field element {:?}. Also evaluated the snark to a field element {:?}. The two results are within 0.01 float margin. Verifier correctly verified the proof that snark evaluates to that value.", model_eval_res_float, model_eval_result, snark_eval_result);
+    tracing::info!("evaluated the model to {:?}, which is represented by a field element {:?}. Also evaluated the snark to a field element {:?}. The two results are within 0.05 float margin. Verifier correctly verified the proof that snark evaluates to that value.", model_eval_res_float, model_eval_result, snark_eval_result);
 
     drop(scope);
     Ok(())
