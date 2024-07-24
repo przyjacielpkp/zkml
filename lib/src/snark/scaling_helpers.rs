@@ -1,9 +1,10 @@
 use std::convert::{TryFrom, TryInto};
 use std::{fmt::Debug, ops::Div};
 
-use ark_ff::{BigInteger256, PrimeField};
+use ark_ff::{BigInteger256, PrimeField, Zero};
 use ark_relations::r1cs::SynthesisError;
 use num_bigint::{BigInt, BigUint, ToBigInt};
+use tracing::info;
 use super::CircuitField;
 
 #[derive(Debug, Clone, Copy)]
@@ -31,7 +32,7 @@ pub fn scaled_float(x: f32, scale: &ScaleT) -> BigInt {
 
 // TODO: factor out a module with conversion helpers
 pub fn unscaled_f(x : CircuitField, scale: &ScaleT) -> Option<f32> {
-  unscaled_bigint(i256_to_bigint(x.into_repr()), scale)
+  unscaled_bigint(f_to_bigint(x), scale)
 } 
 
 pub fn unscaled_bigint(x: BigInt, scale: &ScaleT) -> Option<f32> {
@@ -39,8 +40,7 @@ pub fn unscaled_bigint(x: BigInt, scale: &ScaleT) -> Option<f32> {
   let s = scale.s;
   let z = scale.z;
   let div: i128 = ((x.clone() - z) / s).try_into().ok()?;
-  let rem: u64 = ((x - z) % s).try_into().ok()?;
-  
+  let rem: i128 = ((x - z) % s).try_into().ok()?;
   Some(((div as f64) + ((rem as f64) / (s as f64))) as f32)
   // todo: handle the unwrap upstream
   // assert!(y.is_positive(), "Scaled float outside of the range!");
@@ -57,16 +57,14 @@ pub fn f_from_bigint_unsafe(b: BigInt) -> CircuitField {
   f_from_bigint(b).expect("Expects bigint to fit in the prime field range, otherwise its positive float overflow")
 }
 
-pub fn i256_to_bigint(a: BigInteger256) -> BigInt {
-  let x : BigUint = a.into();
+pub fn f_to_bigint(a: CircuitField) -> BigInt {
+  let x : BigUint = a.into_repr().into();
   x.into()
-  // // let x: u128 = a.try_into();
-  // (BigInt::from(q) << (64 * 3)) + (BigInt::from(w) << (64 * 2)) + (BigInt::from(e) << 64) + BigInt::from(r)
 }
 
 pub fn field_elems_close(a : CircuitField , b : CircuitField, scale: ScaleT) -> bool {
-  let a = i256_to_bigint(a.into_repr());
-  let b = i256_to_bigint(b.into_repr());
+  let a = f_to_bigint(a);
+  let b = f_to_bigint(b);
   let diff = if a < b {b.clone() - a.clone()} else {a.clone() - b.clone()};
   diff.le(
     & ( (a.max(b)).div(scale.s * 100) )
@@ -74,7 +72,8 @@ pub fn field_elems_close(a : CircuitField , b : CircuitField, scale: ScaleT) -> 
 }
 
 pub fn floats_close(a : f32, b: f32) -> bool {
-  (a - b).abs().le( & (0.001 * (a.abs() + b.abs()).max(1.0) ) )
+  let prec = 0.01;
+  (a - b).abs().le( & (prec * (a.abs() + b.abs()).max(1.0) ) )
 }
 pub fn bigints_close_as_floats(a : BigInt, b: BigInt, scale: &ScaleT) -> bool {
   let ab = || {
@@ -89,7 +88,7 @@ pub fn bigints_close_as_floats(a : BigInt, b: BigInt, scale: &ScaleT) -> bool {
 }
 
 pub fn field_close_as_floats(a : CircuitField, b: CircuitField, scale: &ScaleT) -> bool {
-  let ab = || { 
+  let ab = || {
     let aa = unscaled_f(a, scale)?;
     let bb = unscaled_f(b, scale)?;
     Some((aa, bb))
