@@ -5,6 +5,8 @@ use ark_bls12_381::Bls12_381;
 use ark_bls12_381::Fr;
 use ark_ff::{BigInteger256, Field, PrimeField};
 use ark_ff::Zero;
+use ark_r1cs_std::eq::EqGadget;
+use ark_r1cs_std::fields::FieldVar;
 use ark_r1cs_std::uint128;
 use ark_std::cmp::Ordering::Less;
 use ark_groth16::Groth16;
@@ -402,10 +404,7 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
           let rr_val = assignments.get(&r).unwrap().clone();
 
           if graph.check_node_type::<Add>(x) {
-            // how nice would it be to do: (,) <*> ll_val <$> rr_val
-            let ass = ll_val
-              .and_then(|l| rr_val.map(|r| (l, r)))
-              .map(|(l, r)| add_add(l, r, &scale));
+            let ass = ll_val.zip_with(rr_val, |l, r| add_add(l, r, &scale));
             let v = cs.new_witness_variable(|| ass.clone().map(f_from_bigint).unwrap_or(Err(SynthesisError::AssignmentMissing)) /* would be cool to return two error types but in SyntheisError all other types are for internal use. bad design. */)?;
             // A ++ B := A+B-F(z)
             cs.enforce_constraint(
@@ -424,7 +423,6 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
             // v * F(s) = tmp1 + F(z*s) + F(z*z) - tmp2 - Rem
             // l * r = tmp1
             // (l + r)*F(z) = tmp2
-            // let x = F::from(56) + F::try_from(BigUint::from(5)).unwrap();
             let tmp1 = cs.new_witness_variable(|| ll_val.clone().zip_with(rr_val.clone(), |l, r| l * r).and_then(|b| f_from_bigint(b).ok() ).ok_or(SynthesisError::AssignmentMissing) )?;
             let tmp2 = cs.new_witness_variable(|| ll_val.clone().zip_with(rr_val.clone(), |l, r|
               f_from_bigint_unsafe( (l + r) * scale.z ))
@@ -454,8 +452,6 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
             )?;
             (v, ass)
           } else if graph.check_node_type::<LessThan>(x) {
-            // below was written with n = f*scale.s scaling in mind, 
-            // but 
             // witness assignments:
             //   x, y <- if l < r then (l, r) else (r, l)
             //   lt   <- (l < r)
@@ -493,24 +489,23 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
               lc!() + rr - ll,
               lc!() + y - ll
             )?;
-            // todo: uncomment
-            // cs.enforce_constraint(
-            //   lc!() + lt,
-            //   lc!() + ConstraintSystem::<CircuitField>::one() - lt,
-            //   lc!() + ConstraintSystem::<CircuitField>::zero()
-            // )?;
-
+            cs.enforce_constraint(
+              lc!() + lt,
+              lc!() + ConstraintSystem::<CircuitField>::one() - lt,
+              lc!()
+            )?;
+            
             // using the interface from r1cs_std here:
             let xxx = FpVar::<Fr>::Var(AllocatedFp::new(x_val.map(|x| f_from_bigint(x.clone()).ok()).flatten(), x, cs.clone()));
             let yyy = FpVar::<Fr>::Var(AllocatedFp::new(y_val.map(|x| f_from_bigint(x.clone()).ok()).flatten(), y, cs.clone()));
             xxx.enforce_cmp(&yyy, Less, false)?;
-            
+
             let lt_scaled_ass = lt_ass.clone().map(|lt| lt * scale.s + scale.z); // !! scaled_float
             let lt_scaled = cs.new_witness_variable(|| lt_scaled_ass.clone().ok_or(SynthesisError::AssignmentMissing).and_then(f_from_bigint))?;
             cs.enforce_constraint(
               lc!() + lt,
               lc!() + (F::from(scale.s), ConstraintSystem::<CircuitField>::one()),
-              lc!() + (F::from(scale.z), ConstraintSystem::<CircuitField>::one()),
+              lc!() + lt_scaled - (F::from(scale.z), ConstraintSystem::<CircuitField>::one()),
             )?;
 
             // (lt_scaled, lt_scaled_ass)
@@ -562,7 +557,6 @@ mod tests {
 
     #[test]
     fn test_scaling_is_mul_homo(a in -10e15..10e15f64, b in -10e15..10e15f64) {
-    // fn test_scaling_is_mul_homo() {
 
       let scope = crate::utils::init_logging_tests();
       // let a = -7756260652385770.0;
@@ -575,12 +569,9 @@ mod tests {
       let a_f : BigInt = scaled_float(a, &SCALE);
       let b_f : BigInt = scaled_float(b, &SCALE);
       let af_m_bf = mul_mul(a_f.clone(), b_f.clone(), &SCALE).result;
-      // let diff = if af_m_bf.result > a_m_b_f {af_m_bf.result - a_m_b_f} else {a_m_b_f - af_m_bf.result};
-      tracing::info!("a={:?}, b={:?}, a_m_b_f={:?}, af_m_bf={:?}", a_f.clone(), b_f.clone(), a_m_b_f, af_m_bf);
-      tracing::info!("as floats: a={:?}, b={:?}, a_m_b_f={:?}, af_m_bf={:?}", unscaled_bigint(a_f.clone(), &SCALE), 
-      unscaled_bigint(b_f.clone(), &SCALE), unscaled_bigint(a_m_b_f.clone(), &SCALE), unscaled_bigint(af_m_bf.clone(), &SCALE));
-      // type F = CircuitField;
-      // prop_assert!(field_elems_close(f_from_bigint_unsafe(af_m_bf), f_from_bigint_unsafe(a_m_b_f), SCALE), "scaled(a * b) == scaled(a) ** scaled(b)");
+      // tracing::info!("a={:?}, b={:?}, a_m_b_f={:?}, af_m_bf={:?}", a_f.clone(), b_f.clone(), a_m_b_f, af_m_bf);
+      // tracing::info!("as floats: a={:?}, b={:?}, a_m_b_f={:?}, af_m_bf={:?}", unscaled_bigint(a_f.clone(), &SCALE), 
+      // unscaled_bigint(b_f.clone(), &SCALE), unscaled_bigint(a_m_b_f.clone(), &SCALE), unscaled_bigint(af_m_bf.clone(), &SCALE));
       assert!(bigints_close_as_floats(af_m_bf, a_m_b_f, &SCALE), "scaled(a * b) == scaled(a) ** scaled(b)");
 
       drop(scope);

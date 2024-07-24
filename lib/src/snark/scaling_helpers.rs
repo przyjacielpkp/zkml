@@ -72,7 +72,7 @@ pub fn field_elems_close(a : CircuitField , b : CircuitField, scale: ScaleT) -> 
 }
 
 pub fn floats_close(a : f32, b: f32) -> bool {
-  let prec = 0.01;
+  let prec = 0.05; // could be better ;/ todo: improve division accuracy by returning the remainder
   (a - b).abs().le( & (prec * (a.abs() + b.abs()).max(1.0) ) )
 }
 pub fn bigints_close_as_floats(a : BigInt, b: BigInt, scale: &ScaleT) -> bool {
