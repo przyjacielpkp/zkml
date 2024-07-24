@@ -4,7 +4,7 @@ use std::{collections::HashMap, vec};
 
 use model::TrainedGraph;
 use scalar::{copy_graph_roughly, scalar};
-use snark::{CircuitField, MLSnark, SourceType};
+use snark::{scaling_helpers::ScaleT, CircuitField, MLSnark, SourceType};
 
 // #![feature(ascii_char)]
 //
@@ -20,13 +20,6 @@ pub mod notes;
 pub mod scalar;
 pub mod snark;
 pub mod utils;
-
-// pub type ScaleT = u64;
-#[derive(Debug, Clone, Copy)]
-pub struct ScaleT {
-  s : u128,
-  z : u128
-}
 
 pub const SCALE: ScaleT = ScaleT {s : 1_000, z : u128::MAX << 1 /* ~ 1e38 */}; // giving float range from about -1e33 to 1e33
 
@@ -72,11 +65,10 @@ mod tests {
   use crate::{
     compile,
     model::{parse_dataset, TrainParams, TrainedGraph},
-    snark::{f_from_bigint_unsafe, field_close_as_floats, field_elems_close, scaled_float, CircuitField},
+    snark::{CircuitField, scaling_helpers::{f_from_bigint_unsafe, field_close_as_floats, scaled_float, }},
     SCALE,
   };
   use ark_bls12_381::Bls12_381;
-  use ark_ff::Field;
   use ark_groth16::Groth16;
   use ark_snark::SNARK;
   use itertools::Itertools;
