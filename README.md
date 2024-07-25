@@ -41,7 +41,7 @@ The native model of computations which are possible to be made into a snark way 
 
 This means two things:
 
- - Need to encode floats as prime field elements. This is done by scaling, for details see [[Note: floats as ints]](https://github.com/przyjacielpkp/zkml/blob/main/lib/src/snark/snark.rs#L124).
- - Need to rewrite vectorized computations to significantly more scalar computions. This is done and described in [the scalar module](https://github.com/przyjacielpkp/zkml/blob/main/lib/src/snark/scalar.rs#L131).
+ - Need to encode floats as prime field elements. This is done by scaling, for details see [[Note: floats as ints]](https://github.com/przyjacielpkp/zkml/blob/c678d410adc3de188ce439b94ad4b9edba7785cf/lib/src/snark/snark.rs#L124).
+ - Need to rewrite vectorized computations to significantly more scalar computions. This is done and described in [the scalar module](https://github.com/przyjacielpkp/zkml/blob/c678d410adc3de188ce439b94ad4b9edba7785cf/lib/src/scalar.rs#L131).
 
-For a description of what we're dealing with initially as the input ml computation, see [[Note: graph representation]](https://github.com/przyjacielpkp/zkml/blob/main/lib/src/snark/scalar.rs#L31). This is a general and simple representation, similar abstraction level to tinygrad, onnx, pytorch or tensorflow models map onto it (provided these're defined statically, see [pytorch docs](https://pytorch.org/tutorials/intermediate/torch_export_tutorial.html#graph-breaks)).
+For a description of what we're dealing with initially as the input ml computation, see [[Note: graph representation]](https://github.com/przyjacielpkp/zkml/blob/c678d410adc3de188ce439b94ad4b9edba7785cf/lib/src/scalar.rs#L31). This is a general and simple representation, similar abstraction level to tinygrad, onnx, pytorch or tensorflow models map onto it (provided these're defined statically, see [pytorch docs](https://pytorch.org/tutorials/intermediate/torch_export_tutorial.html#graph-breaks)).
