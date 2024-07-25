@@ -6,7 +6,9 @@ use luminal_training::{mse_loss, sgd_on_graph, Autograd};
 use tracing::info;
 
 use crate::{
-  model::{normalize_data, split_dataset, ExponentialAverage, GraphForSnark, InputsVec, OutputsVec},
+  model::{
+    normalize_data, split_dataset, ExponentialAverage, GraphForSnark, InputsVec, OutputsVec,
+  },
   scalar::copy_graph_roughly,
 };
 
@@ -81,11 +83,11 @@ pub fn run_model(train_params: TrainParams) -> TrainedGraph {
     start.elapsed().as_micros() / iter
   );
   // cx.display();
-  let weights_vec = weights
+  let cx_weights_vec: Vec<(NodeIndex, Vec<f32>)> = weights
     .into_iter()
     .map(|a| {
       (
-        remap[&a],
+        a,
         cx.tensors
           .get(&(a, 0 /* assuming single output */))
           .unwrap()
@@ -97,14 +99,19 @@ pub fn run_model(train_params: TrainParams) -> TrainedGraph {
       )
     })
     .collect();
+  let weights_vec = cx_weights_vec
+    .iter()
+    .map(|(a, b)| (remap[&a], b.clone()))
+    .collect();
 
   TrainedGraph {
-    graph : GraphForSnark {
+    graph: GraphForSnark {
       graph: cx_og,
       weights: weights_vec,
       input_id,
     },
     cx: cx,
+    cx_weights: cx_weights_vec,
     cx_output_id: output.id,
     cx_input_id: input.id,
     cx_target_id: target.id,

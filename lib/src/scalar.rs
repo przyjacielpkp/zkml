@@ -12,10 +12,10 @@ use std::{collections::HashMap, error::Error, fs::File, io::Write};
 use itertools::Itertools;
 use petgraph::{
   graph::EdgeIndex,
-  visit::{EdgeRef, IntoEdgeReferences, IntoNodeIdentifiers},
+  visit::{EdgeRef, IntoEdgeReferences, IntoNodeIdentifiers, NodeRef},
   Direction::{Incoming, Outgoing},
 };
-use tracing::{debug, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 use luminal::{
   op::{Constant, InputTensor, Operator},
@@ -48,7 +48,7 @@ pub struct ScalarGraph {
 
 impl ScalarGraph {
   pub fn copy_graph_roughly(&self) -> Self {
-    let (g, remap ) = copy_graph_roughly(&self.graph);
+    let (g, remap) = copy_graph_roughly(&self.graph);
     ScalarGraph {
       graph: g,
       inputs_tracker: self.inputs_tracker.clone(),
@@ -150,7 +150,6 @@ impl InputsTracker {
     }
     InputsTracker { new_inputs: m }
   }
-
 }
 
 #[derive(Debug, Default)]
@@ -338,11 +337,9 @@ impl Compiler for Scalarize {
       );
       assert!(size == front_size * back_size);
       let neutral_node = graph.add_op(ConstantOp { val: neutral }).finish();
-      //  add_op(Constant((ConstantValue::Float(neutral)), FxHashMap::new()));
       let create_reduce_circuit = |i| {
-        let front_i = i / front_size;
-        let back_i = i % front_size;
-        assert!(front_i * front_size + back_i == i);
+        let front_i = i / back_size;
+        let back_i = i % back_size;
         let xs = (0..ax_len).map(|k| {
           front_i * back_size * ax_len + k * back_size + back_i // index in y of k-th element in current axe
         });
@@ -437,10 +434,20 @@ impl Compiler for Scalarize {
         if graph.check_node_type::<Recip>(x) {
           pointwise_op(Recip {}, x, size, &incoming, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<SumReduce>(x) {
-          let ax: &SumReduce = graph.node_weight(x).unwrap().as_any().downcast_ref().unwrap();
+          let ax: &SumReduce = graph
+            .node_weight(x)
+            .unwrap()
+            .as_any()
+            .downcast_ref()
+            .unwrap();
           reduce_op(Add {}, 0.0, x, size, ax.0, yy, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<MaxReduce>(x) {
-          let ax: &MaxReduce = graph.node_weight(x).unwrap().as_any().downcast_ref().unwrap();
+          let ax: &MaxReduce = graph
+            .node_weight(x)
+            .unwrap()
+            .as_any()
+            .downcast_ref()
+            .unwrap();
           reduce_op(Max {}, 1.0, x, size, ax.0, yy, &mut edge_src_indices, graph)
         } else {
           panic!("Unsupported unop OP")
@@ -456,7 +463,14 @@ impl Compiler for Scalarize {
           pointwise_op(Mul {}, x, size, &incoming, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<LessThan>(x) {
           debug!("LessThan {:?} {:?}", ll, rr);
-          pointwise_op(LessThan {}, x, size, &incoming, &mut edge_src_indices, graph)
+          pointwise_op(
+            LessThan {},
+            x,
+            size,
+            &incoming,
+            &mut edge_src_indices,
+            graph,
+          )
         } else {
           todo!("Unsupported yet binop!") // are there any other binops we need?
         }

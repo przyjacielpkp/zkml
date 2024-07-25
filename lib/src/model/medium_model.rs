@@ -115,14 +115,21 @@ pub struct TrainParams {
 pub struct GraphForSnark {
   pub graph: Graph,
   pub input_id: NodeIndex,
-  pub weights: Vec<(NodeIndex, Vec<f32>)>,  
+  pub weights: Vec<(NodeIndex, Vec<f32>)>,
 }
 
 impl GraphForSnark {
   pub fn copy_graph_roughly(&self) -> Self {
     let (g, remap) = copy_graph_roughly(&self.graph);
-    GraphForSnark { graph: g, input_id: remap[&self.input_id], 
-      weights: self.weights.iter().map(|(a, b)| (remap[a], b.clone())).collect() }
+    GraphForSnark {
+      graph: g,
+      input_id: remap[&self.input_id],
+      weights: self
+        .weights
+        .iter()
+        .map(|(a, b)| (remap[a], b.clone()))
+        .collect(),
+    }
   }
 }
 
@@ -130,7 +137,8 @@ impl GraphForSnark {
 pub struct TrainedGraph {
   pub graph: GraphForSnark,
   // below are needed to evaluate the model:
-  pub cx: Graph,            // full trained graph, the above "graph" is a rough copy
+  pub cx: Graph, // full trained graph for evaluation, the above "graph" is a rough copy
+  pub cx_weights: Vec<(NodeIndex, Vec<f32>)>, // needed for evaluation, mostly tests
   pub cx_input_id: NodeIndex, // needed for evaluation, mostly tests
   pub cx_target_id: NodeIndex, // needed for evaluation, mostly tests
   pub cx_output_id: NodeIndex,
@@ -144,6 +152,10 @@ impl TrainedGraph {
       Box::new(move |_| vec![Tensor::new(input_data.to_owned())]);
     self.cx.get_op_mut::<Function>(self.cx_target_id).1 =
       Box::new(move |_| vec![Tensor::new(vec![0.0])]); // doesnt matter
+    let weights = self.cx_weights.clone();
+    for (a, b) in weights {
+      self.cx.get_op_mut::<Function>(a).1 = Box::new(move |_| vec![Tensor::new(b.clone())]);
+    }
     self.cx.execute();
     let d = self
       .cx
@@ -223,11 +235,11 @@ pub fn run_model(train_params: TrainParams) -> TrainedGraph {
     start.elapsed().as_micros() / iter
   );
   // cx.display();
-  let weights_vec = weights
+  let cx_weights_vec: Vec<(NodeIndex, Vec<f32>)> = weights
     .into_iter()
     .map(|a| {
       (
-        remap[&a],
+        a,
         cx.tensors
           .get(&(a, 0 /* assuming single output */))
           .unwrap()
@@ -239,14 +251,19 @@ pub fn run_model(train_params: TrainParams) -> TrainedGraph {
       )
     })
     .collect();
-  assert!(input_id == input.id);
+  let weights_vec = cx_weights_vec
+    .iter()
+    .map(|(a, b)| (remap[&a], b.clone()))
+    .collect();
+  // assert!(input_id == input.id);
   TrainedGraph {
-    graph : GraphForSnark {
+    graph: GraphForSnark {
       graph: cx_og,
       weights: weights_vec,
       input_id,
     },
     cx: cx,
+    cx_weights: cx_weights_vec,
     cx_output_id: output.id,
     cx_input_id: input.id,
     cx_target_id: target.id,
