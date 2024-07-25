@@ -1,4 +1,5 @@
 use std::{
+  collections::HashMap,
   fs::File,
   path::{Path, PathBuf},
 };
@@ -6,6 +7,7 @@ use std::{
 use ark_groth16::Groth16;
 use ark_serialize::CanonicalSerialize;
 use ark_snark::SNARK;
+use luminal::compiler_utils::ToId;
 use rand::{rngs::StdRng, SeedableRng};
 
 use crate::{model::TrainParams, snark::Curve};
@@ -33,7 +35,7 @@ impl Setup {
     }
   }
 
-  pub async fn run(self) {
+  pub fn run(self) {
     let rng = StdRng::seed_from_u64(1);
 
     let dataset = crate::model::read_dataset(self.dataset_path.as_path()).unwrap();
