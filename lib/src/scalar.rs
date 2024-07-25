@@ -28,7 +28,7 @@ use luminal::{
 /// Asserts (in non-strictly-typed way) that all input tensors are single values.
 #[derive(Debug)]
 pub struct ScalarGraph {
-  /// Note Graph representation:
+  /// Note: graph representation:
   ///   Graph is a DAG of the expression defining a tensor computation.
   ///   
   ///   Nodes keep weights signifying operations. You check the weight by type assertions on the node weight.
@@ -62,45 +62,14 @@ pub fn scalar(mut cx: Graph) -> ScalarGraph {
   // let mut cx1 = (&cx).clone().clone();
   // we dont care about remap for now
   let mut remap: Vec<NodeIndex> = vec![];
-  let ((), inputs_tracker) = cx.compile(ScalarCompiler::default(), &mut remap);
+  let inputs_tracker = cx.compile(ScalarCompiler::default(), &mut remap);
   ScalarGraph {
     graph: cx,
     inputs_tracker,
   }
 }
 
-#[derive(Debug, Default)]
-pub struct UniformOutShapes;
-
-/// Kinda obsolete
-/// This step doesn't modify the graph, only asserts a property (uniform shapes).
-/// We keep it out of interest in whether it succeeds. Comment out the moment it fails and we know why.
-impl Compiler for UniformOutShapes {
-  type Output = ();
-  #[instrument(level = "debug", skip(_ids))]
-  fn compile<T: ToIdsMut>(&self, graph: &mut Graph, _ids: T) -> Self::Output {
-    // For every node substitute as many copies of it as there are distinct outgoing shapes.
-    // Connect the new nodes to the target nodes correspondingly wrt shapes.
-
-    // Assuming : output_in = 0
-    // Shapes could actually be different
-
-    debug!("Assuming from every node all outgoing edges are of same shape and output_in.");
-    for node in graph.graph.node_indices() {
-      let all_equal = graph
-        .graph
-        .edges_directed(node, Outgoing)
-        .filter_map(|e| e.weight().as_data().map(|w| (w.1 /* hope equal 0 */, w.2)))
-        .all_equal();
-      assert!(
-        all_equal,
-        "All outgoing edges of a node must have the same shape."
-      )
-    }
-  }
-}
-
-pub type ScalarCompiler = (UniformOutShapes, Scalarize);
+pub type ScalarCompiler = (Scalarize);
 
 #[derive(Debug, Default, Clone)]
 /// In the scalar graph used for source nodes no matter they original Op.
@@ -158,11 +127,8 @@ pub struct Scalarize;
 impl Compiler for Scalarize {
   type Output = InputsTracker;
 
-  // THIS-WORKS
-
   #[instrument(level = "debug", name = "compile", skip(_ids))]
   /// Start from the sinks in graph and go backwards.
-  /// Look at a node - assume all its outgoing shapes are the same (due to UniformOutShapes).
   /// We want to rewrite it to many little nodes.
   /// From previous steps the outgoing edges are already multiplied into shape many edges.
   /// We want to create shape many little nodes with outputs (and as many as needed nodes to implement the rest of the circuit).
