@@ -26,9 +26,9 @@ pub fn run_model(train_params: TrainParams) -> TrainedGraph {
   let output = model.forward(input).retrieve();
 
   // cx.display();
-  // record graph without gradients. assuming nodeids dont change in Autograd::compile
+  // record graph without gradients.
   let (cx_og, remap) = copy_graph_roughly(&cx);
-  let input_id = input.id;
+  let input_id = remap[&input.id];
 
   let target = cx.tensor::<R1<1>>();
   let loss = mse_loss(output, target).retrieve();

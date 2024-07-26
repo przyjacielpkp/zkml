@@ -15,7 +15,7 @@ use petgraph::{
   visit::{EdgeRef, IntoEdgeReferences, IntoNodeIdentifiers, NodeRef},
   Direction::{Incoming, Outgoing},
 };
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, instrument, warn};
 
 use luminal::{
   op::{Constant, InputTensor, Operator},
@@ -49,9 +49,10 @@ pub struct ScalarGraph {
 impl ScalarGraph {
   pub fn copy_graph_roughly(&self) -> Self {
     let (g, remap) = copy_graph_roughly(&self.graph);
+    let inputs_tracker = self.inputs_tracker.remap(remap);
     ScalarGraph {
       graph: g,
-      inputs_tracker: self.inputs_tracker.clone(),
+      inputs_tracker,
     }
   }
 }

@@ -26,7 +26,7 @@ Here, either the weights or the inputs or any combination of the two can be made
 
 ### Demo
 
-To see how it's used and how it works, check out the tests in [lib::test_trained_into_snark](https://github.com/przyjacielpkp/zkml/blob/main/lib/src/lib.rs#L76). Or run them with `cargo test --profile=test`. Tests take some minute and a half to run on my laptop.
+To see how it's used and how it works, check out the tests in [lib::test_trained_into_snark](https://github.com/przyjacielpkp/zkml/blob/main/lib/src/lib.rs#L76). Or run them with `cargo test --profile=test`. Tests take about a minute to run on my laptop.
 
 These demonstrate the full functionality: 
  - a trained model is taken, that is a computation graph with the weight assignments (and some more bookeeping, we admit the abstraction is leaky here)

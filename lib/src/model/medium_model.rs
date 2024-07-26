@@ -104,15 +104,17 @@ pub fn get_weights(graph: &Graph, model: &Model) -> HashMap<NodeIndex, Vec<f32>>
 
 pub struct TrainParams {
   pub data: (InputsVec, OutputsVec),
-  // pub output: PathBuf,
   pub epochs: usize,
   // pub lr: f32,
   // pub batch_size: u32,
   // pub model: Model,
 }
 
+/// Contains everything needed to define the snark: the ml graph but without the gradients, trained weights and indexes.
+/// Note: this is quite a specific and frankly poor interface between training and snark synthesiz, so don't take it as engraved in stone.
 #[derive(Debug)]
 pub struct GraphForSnark {
+  // the initial ml computation graph, without gradients
   pub graph: Graph,
   pub input_id: NodeIndex,
   pub weights: Vec<(NodeIndex, Vec<f32>)>,
@@ -133,19 +135,21 @@ impl GraphForSnark {
   }
 }
 
+/// Contains everything needed to define a snark and also evaluate the model.
+/// Note: this is quite a specific and frankly poor interface between training and snark synthesiz, so don't take it as engraved in stone.
+///       Generally: this is graph + some stuff recorded to evaluate it on input.
 #[derive(Debug)]
 pub struct TrainedGraph {
+  /// the original ml computation graph, without gradients + input id + trained weights
   pub graph: GraphForSnark,
-  // below are needed to evaluate the model:
-  pub cx: Graph, // full trained graph for evaluation, the above "graph" is a rough copy
-  pub cx_weights: Vec<(NodeIndex, Vec<f32>)>, // needed for evaluation, mostly tests
+  // below are needed to evaluate the model to compare result against a snark derived from GraphForSnark:
+  pub cx: Graph, /// full trained graph for evaluation, the above "graph" is similar but without gradients
+  pub cx_weights: Vec<(NodeIndex, Vec<f32>)>, // needed for evaluation, mostly tests. redundant a bit
   pub cx_input_id: NodeIndex, // needed for evaluation, mostly tests
   pub cx_target_id: NodeIndex, // needed for evaluation, mostly tests
   pub cx_output_id: NodeIndex,
 }
 
-// todo: make general
-// impl<I: Shape, M : Module<GraphTensor<I>>>
 impl TrainedGraph {
   pub fn evaluate(&mut self, input_data: Vec<f32>) -> Vec<f32> {
     self.cx.get_op_mut::<Function>(self.cx_input_id).1 =
@@ -181,7 +185,7 @@ pub fn run_model(train_params: TrainParams) -> TrainedGraph {
   // cx.display();
   // record graph without gradients. assuming nodeids dont change in Autograd::compile
   let (cx_og, remap) = copy_graph_roughly(&cx);
-  let input_id = input.id;
+  let input_id = remap[&input.id];
 
   let target = cx.tensor::<R1<1>>();
   let loss = mse_loss(output, target).retrieve();
