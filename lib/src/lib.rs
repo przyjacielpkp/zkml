@@ -1,18 +1,9 @@
-#![feature(option_zip)]
-
 use std::{collections::HashMap, vec};
 
 use model::TrainedGraph;
-use scalar::{copy_graph_roughly, scalar};
+use scalar::scalar;
 use snark::{scaling_helpers::ScaleT, CircuitField, MLSnark, SourceType};
 
-// #![feature(ascii_char)]
-//
-// use std::collections::HashMap;
-//
-// use scalar::scalar;
-// use snark::MLSnark;
-//
 pub mod model;
 pub mod subcommands;
 
@@ -24,7 +15,7 @@ pub mod utils;
 pub const SCALE: ScaleT = ScaleT {
   s: 100_000,
   z: u128::MAX << 2, /* ~ 1e38 */
-}; // giving float range from about -1e29 to 1e29
+}; // giving float range from about -1e32 to 1e32
 
 /// Main crate export. Take a tensor computation and rewrite to snark.
 pub fn compile(c: &TrainedGraph) -> MLSnark<CircuitField> {

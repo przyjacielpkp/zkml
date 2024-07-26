@@ -69,7 +69,7 @@ pub fn scalar(mut cx: Graph) -> ScalarGraph {
   }
 }
 
-pub type ScalarCompiler = (Scalarize);
+pub type ScalarCompiler = Scalarize;
 
 #[derive(Debug, Default, Clone)]
 /// In the scalar graph used for source nodes no matter they original Op.

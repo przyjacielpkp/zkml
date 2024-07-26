@@ -1,29 +1,21 @@
-use std::convert::{TryFrom, TryInto};
-use std::{collections::HashMap, fmt::Debug, ops::Div};
+use std::convert::TryInto;
+use std::{collections::HashMap, fmt::Debug};
 
 use ark_bls12_381::Bls12_381;
 use ark_bls12_381::Fr;
-use ark_ff::Zero;
-use ark_ff::{BigInteger256, Field, PrimeField};
 use ark_groth16::Groth16;
 use ark_groth16::Proof;
 use ark_groth16::ProvingKey;
 use ark_groth16::VerifyingKey;
-use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::fp::AllocatedFp;
 use ark_r1cs_std::fields::fp::FpVar;
-use ark_r1cs_std::fields::FieldVar;
-use ark_r1cs_std::uint128;
 use ark_relations::{
   lc,
   r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError},
 };
 use ark_snark::SNARK;
 use ark_std::cmp::Ordering::Less;
-use blake2::digest::generic_array::typenum::uint;
 use itertools::Itertools;
-
-use luminal::prelude::petgraph::data::DataMap;
 use luminal::prelude::petgraph::Direction::Outgoing;
 
 ///
@@ -36,12 +28,11 @@ use luminal::{
     NodeIndex,
   },
 };
-use num_bigint::{BigInt, BigUint, ToBigInt};
-use tracing::{info, instrument, warn};
+use num_bigint::{BigInt, BigUint};
+use tracing::{instrument, warn};
 
 use crate::scalar::ConstantOp;
 use crate::scalar::InputOp;
-// use crate::model::copy_graph_roughly;
 use crate::scalar::{InputsTracker, ScalarGraph};
 use crate::snark::scaling_helpers::*;
 
@@ -414,7 +405,7 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
           let rr_val = assignments.get(&r).unwrap().clone();
 
           if graph.check_node_type::<Add>(x) {
-            let ass = ll_val.zip_with(rr_val, |l, r| add_add(l, r, &scale));
+            let ass = zip_with(ll_val, rr_val, |l, r| add_add(l, r, &scale));
             let v = cs.new_witness_variable(|| ass.clone().map(f_from_bigint).unwrap_or(Err(SynthesisError::AssignmentMissing)) /* would be cool to return two error types but in SyntheisError all other types are for internal use. bad design. */)?;
             // A ++ B := A+B-F(z)
             cs.enforce_constraint(
@@ -439,23 +430,17 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
             // l * r = tmp1
             // (l + r)*F(z) = tmp2
             let tmp1 = cs.new_witness_variable(|| {
-              ll_val
-                .clone()
-                .zip_with(rr_val.clone(), |l, r| l * r)
+              zip_with(ll_val.clone(), rr_val.clone(), |l, r| l * r)
                 .and_then(|b| f_from_bigint(b).ok())
                 .ok_or(SynthesisError::AssignmentMissing)
             })?;
             let tmp2 = cs.new_witness_variable(|| {
-              ll_val
-                .clone()
-                .zip_with(rr_val.clone(), |l, r| {
+              zip_with(ll_val.clone(), rr_val.clone(), |l, r| {
                   f_from_bigint_unsafe((l + r) * scale.z)
                 })
                 .ok_or(SynthesisError::AssignmentMissing)
             })?;
-            let div_res = ll_val
-              .clone()
-              .zip_with(rr_val.clone(), |l, r| mul_mul(l, r, &scale));
+            let div_res = zip_with(ll_val.clone(), rr_val.clone(), |l, r| mul_mul(l, r, &scale));
             let rem = cs.new_witness_variable(|| {
               div_res
                 .clone()
@@ -603,6 +588,10 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
     self.recorded_public_inputs = public_record;
     Ok(())
   }
+}
+
+fn zip_with<A, B, C>(a: Option<A>, b : Option<B>, f : impl Fn(A, B) -> C) -> Option<C> {
+  a.and_then(|a| b.map(|b| f(a, b)))
 }
 
 mod tests {

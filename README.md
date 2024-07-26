@@ -45,3 +45,38 @@ This means two things:
  - Need to rewrite vectorized computations to significantly more scalar computions. This is done and described in [the scalar module](https://github.com/przyjacielpkp/zkml/blob/c678d410adc3de188ce439b94ad4b9edba7785cf/lib/src/scalar.rs#L131).
 
 For a description of what we're dealing with initially as the input ml computation, see [[Note: graph representation]](https://github.com/przyjacielpkp/zkml/blob/c678d410adc3de188ce439b94ad4b9edba7785cf/lib/src/scalar.rs#L31). This is a general and simple representation, similar abstraction level to tinygrad, onnx, pytorch or tensorflow models map onto it (provided these're defined statically, see [pytorch docs](https://pytorch.org/tutorials/intermediate/torch_export_tutorial.html#graph-breaks)).
+
+
+## Building
+
+Build with cargo:
+
+```
+cargo build
+```
+
+and run tests with:
+
+```
+cargo test --profile=test
+```
+
+Project was tested with `rustc 1.80.0-nightly (da159eb33 2024-05-28)`, but that's not a hard requirement.
+
+### Dependencies
+
+Other than the cargo dependencies, there are 2 dependencies:
+
+```
+pkg-config
+openssl
+```
+
+which can be installed systemwide, or provided in a developer shell by running `nix-shell` (see [nix-shell](https://nixos.wiki/wiki/Development_environment_with_nix-shell)) in the project directory. On Nixos also specify:
+
+```
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-Zlinker-features=-lld"]
+```
+
+in `.cargo/config.toml`.

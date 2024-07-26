@@ -1,19 +1,14 @@
-use std::iter::zip;
 
-use luminal::{graph, prelude::*};
+use luminal::prelude::*;
 use luminal_nn::{Linear, ReLU};
-use luminal_training::{mse_loss, sgd_on_graph, Autograd};
 use petgraph::Direction::Outgoing;
-use tracing::info;
 
 use crate::{
-  model::{
-    normalize_data, split_dataset, ExponentialAverage, GraphForSnark, InputsVec, OutputsVec,
-  },
+  model::GraphForSnark,
   scalar::copy_graph_roughly,
 };
 
-use super::{TrainParams, TrainedGraph};
+use super::TrainedGraph;
 
 pub type Model = (Linear<3, 2>, ReLU, Linear<2, 1>);
 

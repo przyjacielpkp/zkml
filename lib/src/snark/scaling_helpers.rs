@@ -2,10 +2,9 @@ use std::convert::{TryFrom, TryInto};
 use std::{fmt::Debug, ops::Div};
 
 use super::CircuitField;
-use ark_ff::{BigInteger256, PrimeField, Zero};
+use ark_ff::PrimeField;
 use ark_relations::r1cs::SynthesisError;
 use num_bigint::{BigInt, BigUint, ToBigInt};
-use tracing::info;
 
 #[derive(Debug, Clone, Copy)]
 /// Defines a scaling of a float by: x => round(s * x) + z
