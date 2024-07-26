@@ -1,15 +1,12 @@
-use ark_serialize::{CanonicalSerialize, Write};
-use serde::Serialize;
-use std::path::Path;
 
 #[cfg(not(debug_assertions))]
 use human_panic::setup_panic;
-use tracing::subscriber::{self, SetGlobalDefaultError};
 
 #[cfg(debug_assertions)]
 extern crate better_panic;
 
-use tracing_subscriber::{self, fmt};
+use tracing::subscriber::{DefaultGuard, SetGlobalDefaultError};
+use tracing_subscriber::{self};
 
 // [NOTE] tracing
 //
@@ -64,27 +61,24 @@ pub fn init_logging() -> Result<(), SetGlobalDefaultError> {
   Ok(())
 }
 
-pub fn canonical_serialize_to_file<T: CanonicalSerialize>(path: &Path, obj: &T) {
-  let mut buff = Vec::<u8>::new();
-  obj.serialize(&mut buff);
+pub fn init_logging_tests() -> DefaultGuard {
+  // Human Panic. Only enabled when *not* debugging.
+  #[cfg(not(debug_assertions))]
+  {
+    setup_panic!();
+  }
 
-  if let Err(e) = std::fs::write(path, buff) {
-    panic!(
-      "Error creating file {}: {}",
-      path.to_str().unwrap(),
-      e.to_string()
-    );
-  };
-}
+  // Better Panic. Only enabled *when* debugging.
+  #[cfg(debug_assertions)]
+  {
+    better_panic::Settings::debug()
+      .most_recent_first(false)
+      .lineno_suffix(true)
+      .verbosity(better_panic::Verbosity::Full)
+      .install();
+  }
 
-pub fn serialize_to_file<T: Serialize>(path: &Path, obj: &T) {
-  let buff = serde_json::to_string(obj).unwrap();
-
-  if let Err(e) = std::fs::write(path, buff) {
-    panic!(
-      "Error creating file {}: {}",
-      path.to_str().unwrap(),
-      e.to_string()
-    );
-  };
+  let subscriber = tracing_subscriber::fmt().compact();
+  let subscriber = subscriber.finish();
+  tracing::subscriber::set_default(subscriber)
 }

@@ -5,6 +5,9 @@ authors = [""]
 description = "Main"
 edition = "2018"
 
+[lib]
+doctest = false
+
 [dependencies]
 axum = "0.7.5"
 reqwest = "0.12.5"
@@ -20,7 +23,11 @@ itertools = "0.13.0"
 dfdx = "0.13.0"            # maybe completely unneeded
 rand = "0.8.5"
 better-panic = "0.2.0"
+human-panic = "2.0.0"
 petgraph-graphml = "3.0.0"
+# quickcheck = "1.0.3" # float tests
+proptest = "1.5.0"
+num-bigint = "0.4.6"
 
 # arkworks
 ark-std = { version = "^0.3.0", default-features = false }

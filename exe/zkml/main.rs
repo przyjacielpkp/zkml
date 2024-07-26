@@ -1,7 +1,11 @@
 use lib::*;
 
 use clap::{Parser, Subcommand};
-use std::{error::Error, path::PathBuf};
+use model::{read_dataset, TrainParams};
+use std::{
+  error::Error,
+  path::{Path, PathBuf},
+};
 
 #[derive(Parser)]
 struct Cli {
@@ -27,15 +31,11 @@ enum Command {
     #[arg(short, long, default_value_t = 4545)]
     port: u16,
   },
-  Setup {
-    #[arg(long)]
-    dataset_path: PathBuf,
-    #[arg(long)]
-    prover_output_path: PathBuf,
-    #[arg(long)]
-    verifier_output_path: PathBuf,
-    #[arg(long)]
-    weights_output_path: PathBuf,
+  Model {
+    #[arg(short, long, value_name = "PATH")]
+    data: PathBuf,
+    #[arg(short, long, value_name = "INT", default_value_t = 20)]
+    epochs: usize,
   },
 }
 
@@ -58,19 +58,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
       let app = subcommands::Server::new(port);
       app.run().await;
     }
-    Command::Setup {
-      dataset_path,
-      prover_output_path,
-      verifier_output_path,
-      weights_output_path,
-    } => {
-      let app = subcommands::Setup::new(
-        &dataset_path,
-        &prover_output_path,
-        &verifier_output_path,
-        &weights_output_path,
-      );
-      app.run();
+    Command::Model { data, epochs } => {
+      let ds = read_dataset(Path::new(&data)).unwrap();
+      lib::model::run_model(TrainParams { data: ds, epochs });
     }
   }
   Ok(())

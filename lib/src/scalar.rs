@@ -12,10 +12,10 @@ use std::{collections::HashMap, error::Error, fs::File, io::Write};
 use itertools::Itertools;
 use petgraph::{
   graph::EdgeIndex,
-  visit::{EdgeRef, IntoNodeIdentifiers},
+  visit::{EdgeRef, IntoEdgeReferences, IntoNodeIdentifiers, NodeRef},
   Direction::{Incoming, Outgoing},
 };
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, instrument, warn};
 
 use luminal::{
   op::{Constant, InputTensor, Operator},
@@ -23,10 +23,12 @@ use luminal::{
   shape::Shape,
 };
 
+// use crate::model::copy_graph_roughly;
+
 /// Asserts (in non-strictly-typed way) that all input tensors are single values.
 #[derive(Debug)]
 pub struct ScalarGraph {
-  /// Note Graph representation:
+  /// Note: graph representation:
   ///   Graph is a DAG of the expression defining a tensor computation.
   ///   
   ///   Nodes keep weights signifying operations. You check the weight by type assertions on the node weight.
@@ -44,51 +46,31 @@ pub struct ScalarGraph {
   pub inputs_tracker: InputsTracker,
 }
 
+impl ScalarGraph {
+  pub fn copy_graph_roughly(&self) -> Self {
+    let (g, remap) = copy_graph_roughly(&self.graph);
+    let inputs_tracker = self.inputs_tracker.remap(remap);
+    ScalarGraph {
+      graph: g,
+      inputs_tracker,
+    }
+  }
+}
+
 /// Rewrite the static tensor computation to scalar computation.
 pub fn scalar(mut cx: Graph) -> ScalarGraph {
   // TODO: unfortunetely original cx is destroyed in the process
   // let mut cx1 = (&cx).clone().clone();
   // we dont care about remap for now
   let mut remap: Vec<NodeIndex> = vec![];
-  let ((), inputs_tracker) = cx.compile(ScalarCompiler::default(), &mut remap);
+  let inputs_tracker = cx.compile(ScalarCompiler::default(), &mut remap);
   ScalarGraph {
     graph: cx,
     inputs_tracker,
   }
 }
 
-#[derive(Debug, Default)]
-pub struct UniformOutShapes;
-
-/// Kinda obsolete
-/// This step doesn't modify the graph, only asserts a property (uniform shapes).
-/// We keep it out of interest in whether it succeeds. Comment out the moment it fails and we know why.
-impl Compiler for UniformOutShapes {
-  type Output = ();
-  #[instrument(level = "debug", skip(ids))]
-  fn compile<T: ToIdsMut>(&self, graph: &mut Graph, ids: T) -> Self::Output {
-    // For every node substitute as many copies of it as there are distinct outgoing shapes.
-    // Connect the new nodes to the target nodes correspondingly wrt shapes.
-
-    // Assuming : output_in = 0
-    // Shapes could actually be different
-
-    debug!("Assuming from every node all outgoing edges are of same shape and output_in.");
-    for node in graph.graph.node_indices() {
-      let all_equal = graph
-        .graph
-        .edges_directed(node, Outgoing)
-        .filter_map(|e| e.weight().as_data().map(|w| (w.1 /* hope equal 0 */, w.2)))
-        .all_equal();
-      assert!(
-        all_equal,
-        "All outgoing edges of a node must have the same shape."
-      )
-    }
-  }
-}
-
-pub type ScalarCompiler = (UniformOutShapes, Scalarize);
+pub type ScalarCompiler = Scalarize;
 
 #[derive(Debug, Default, Clone)]
 /// In the scalar graph used for source nodes no matter they original Op.
@@ -101,7 +83,10 @@ impl Operator for InputOp {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct ConstantOp {}
+pub struct ConstantOp {
+  // we support just the Constant's we can evaluate statically, thats why it can be simpler than Constant op
+  pub val: f32,
+}
 
 impl Operator for ConstantOp {
   fn process(&mut self, _inp: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
@@ -119,13 +104,22 @@ impl Operator for Max {
   }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 /// Remembers how to supply inputs to scalar graph to match inputs to tensor graph.
 /// Tracks inputs and constant.
 pub struct InputsTracker {
   /// If x was of shape (2, 3) then new_inputs[x] should be a vector of length 6
   pub new_inputs: HashMap<NodeIndex, Vec<NodeIndex>>,
-  pub constants: HashMap<NodeIndex, f32>,
+}
+
+impl InputsTracker {
+  pub fn remap(&self, remap: HashMap<NodeIndex, NodeIndex>) -> Self {
+    let mut m = HashMap::new();
+    for (k, v) in self.new_inputs.iter() {
+      m.insert(*k, v.iter().map(|x| *remap.get(x).unwrap()).collect());
+    }
+    InputsTracker { new_inputs: m }
+  }
 }
 
 #[derive(Debug, Default)]
@@ -134,11 +128,8 @@ pub struct Scalarize;
 impl Compiler for Scalarize {
   type Output = InputsTracker;
 
-  // THIS-WORKS
-
   #[instrument(level = "debug", name = "compile", skip(_ids))]
   /// Start from the sinks in graph and go backwards.
-  /// Look at a node - assume all its outgoing shapes are the same (due to UniformOutShapes).
   /// We want to rewrite it to many little nodes.
   /// From previous steps the outgoing edges are already multiplied into shape many edges.
   /// We want to create shape many little nodes with outputs (and as many as needed nodes to implement the rest of the circuit).
@@ -185,7 +176,7 @@ impl Compiler for Scalarize {
           {
             Some((_, _, shape)) => shape,
             None => {
-              panic!("Add node has no outgoing edges and is not a retrieval node.")
+              panic!("A node has no outgoing edges and is not a retrieval node.")
             }
           }
         }
@@ -240,10 +231,6 @@ impl Compiler for Scalarize {
             panic!("Something fucked up, outgoing edge index outside of expected physical size")
           }
         };
-        info!(
-          "phys={:?}, i={:?}, output={:?}",
-          phys_index, input_order, output_order
-        );
         graph.add_edge(
           little_nodes[phys_index],
           target,
@@ -267,7 +254,7 @@ impl Compiler for Scalarize {
       let little_nodes = make_nodes(size, op, graph);
       connect_out_edges(x, &little_nodes, edge_src_indices, graph);
 
-      for (e, (b, output_order, shape), source) in incoming {
+      for (_e, (b, output_order, shape), source) in incoming {
         // assert!(*output_order == 0, "Assuming sigle valued Op's"); // actually idk if we do
         // assuming static shape
         let k = shape.n_elements().to_usize().unwrap();
@@ -275,8 +262,7 @@ impl Compiler for Scalarize {
         for j in 0..k {
           let (from, to) = (j, j); // pointwise
           debug!("k={:?}, j={:?}, b={:?}", k, j, b);
-          edge_src_indices.insert(*e, from);
-          graph.add_edge(
+          let new_e = graph.add_edge(
             source.clone(),
             little_nodes[to],
             Dependency::Data {
@@ -285,6 +271,7 @@ impl Compiler for Scalarize {
               shape: *shape, // saving the original shape
             },
           );
+          edge_src_indices.insert(new_e, from);
         }
       }
       little_nodes
@@ -292,6 +279,7 @@ impl Compiler for Scalarize {
 
     fn reduce_op<T: Operator + 'static + Clone>(
       op: T,
+      neutral: f32,
       x: NodeIndex,
       size: usize,
       ax: usize, /* reduce axis */
@@ -304,24 +292,25 @@ impl Compiler for Scalarize {
       let ax_len = dims[ax];
       let front_size = dims.iter().take(ax).product::<usize>().max(1);
       let back_size = dims.iter().skip(ax + 1).product::<usize>().max(1);
-      assert!(
-        ax_len > 1,
-        "Why reducing scalar? but also im lazy to implement that edgecase."
-      );
+      // assert!(
+      //   ax_len > 1,
+      //   "Why reducing scalar? but also im lazy to implement that edgecase. ax_len={:?}, ax={:?}, dims={:?}, sh={:?}",
+      //   ax_len, ax, dims, sh
+      // );
       assert!(*from_output == 0, "Thats not strictly necessary but 1) is always the case 2) is needed for this lazy implementation." );
       assert!(
         size == sh.n_elements().to_usize().unwrap() / ax_len,
         "Expect result size to be the size after collapsing the ax dim."
       );
       assert!(size == front_size * back_size);
+      let neutral_node = graph.add_op(ConstantOp { val: neutral }).finish();
       let create_reduce_circuit = |i| {
-        let front_i = i / front_size;
-        let back_i = i % front_size;
-        assert!(front_i * front_size + back_i == i);
+        let front_i = i / back_size;
+        let back_i = i % back_size;
         let xs = (0..ax_len).map(|k| {
           front_i * back_size * ax_len + k * back_size + back_i // index in y of k-th element in current axe
         });
-        xs.fold(*y, |l_node, k| {
+        xs.fold(neutral_node, |l_node, k| {
           let new = graph.add_op(op.clone()).finish();
           let _ = graph.add_edge(
             l_node,
@@ -377,7 +366,6 @@ impl Compiler for Scalarize {
       // Invariant of the loop:
       //  - all nodes upstream from x (later in toposort) were already substituted for many scalar nodes.
       //  - the outgoing edges are of scalar shape and we have recorded *what physical index in the result of x the edge connects to*
-      info!("x={:?} in g={:?}", x, graph.graph);
 
       let incoming: Vec<_> = graph
         .edges_directed(x, Incoming)
@@ -395,27 +383,22 @@ impl Compiler for Scalarize {
           inputs_tracker.new_inputs.insert(x, little_nodes.clone());
           little_nodes
         } else if graph.check_node_type::<Constant>(x) {
-          let little_nodes = make_nodes(size, ConstantOp {}, graph);
-          connect_out_edges(x, &little_nodes, &edge_src_indices, graph);
           let val = graph.node_weight_mut(x).unwrap().process(vec![])[0]
             .downcast_ref::<Vec<f32>>()
             .unwrap()
             .clone()[0];
+          let little_nodes = make_nodes(size, ConstantOp { val }, graph);
+          connect_out_edges(x, &little_nodes, &edge_src_indices, graph);
           assert!(
             little_nodes.len() == 1,
             "Constants are expected to be scalars"
           );
-          little_nodes.iter().for_each(|y| {
-            inputs_tracker.constants.insert(*y, val);
-          });
           little_nodes
         } else {
           panic!("Unsupported source node type!")
         }
       } else if let Some((yy,)) = incoming.iter().collect_tuple() {
         if graph.check_node_type::<Recip>(x) {
-          // same as Add but unop
-          // TODO: this works right???
           pointwise_op(Recip {}, x, size, &incoming, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<SumReduce>(x) {
           let ax: &SumReduce = graph
@@ -424,7 +407,7 @@ impl Compiler for Scalarize {
             .as_any()
             .downcast_ref()
             .unwrap();
-          reduce_op(Add {}, x, size, ax.0, yy, &mut edge_src_indices, graph)
+          reduce_op(Add {}, 0.0, x, size, ax.0, yy, &mut edge_src_indices, graph)
         } else if graph.check_node_type::<MaxReduce>(x) {
           let ax: &MaxReduce = graph
             .node_weight(x)
@@ -432,7 +415,7 @@ impl Compiler for Scalarize {
             .as_any()
             .downcast_ref()
             .unwrap();
-          reduce_op(Max {}, x, size, ax.0, yy, &mut edge_src_indices, graph)
+          reduce_op(Max {}, 1.0, x, size, ax.0, yy, &mut edge_src_indices, graph)
         } else {
           panic!("Unsupported unop OP")
         }
@@ -486,12 +469,71 @@ pub fn pretty_print_g(graph: &Graph) -> Result<(), Box<dyn Error>> {
   use petgraph_graphml::GraphMl;
   let a = GraphMl::new(&graph.graph).pretty_print(true);
   let mut str: Vec<u8> = vec![];
-  let x = a.to_writer(&mut str)?;
+  a.to_writer(&mut str)?;
   let str = String::from_utf8(str)?;
   // let str1 = str.as_ascii().into_iter().map(|x| x.clone()).collect::<Vec<_>>();
   println!("pretty g = {:?}", str);
 
   Ok(())
+}
+
+// copies things that are relevant. very much not exact copy
+// Expects a graph with indices from the [0..n] range without gaps (check the commented lines).
+pub fn copy_graph_roughly(src: &Graph) -> (Graph, HashMap<NodeIndex, NodeIndex>) {
+  let mut g = Graph::new();
+  let mut map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+  // copy nodes
+  for x in src.node_indices().sorted() {
+    let n = if src.check_node_type::<Add>(x) {
+      g.add_op(Add {}).finish()
+    } else if src.check_node_type::<Mul>(x) {
+      g.add_op(Mul {}).finish()
+    } else if src.check_node_type::<LessThan>(x) {
+      g.add_op(LessThan {}).finish()
+    } else if src.check_node_type::<Function>(x) {
+      g.add_op(Function(
+        "Load".to_string(),
+        Box::new(|_| panic!("dont run")),
+      ))
+      .finish()
+    } else if src.check_node_type::<Recip>(x) {
+      g.add_op(Recip {}).finish()
+    } else if src.check_node_type::<MaxReduce>(x) {
+      let op = src.get_op::<MaxReduce>(x);
+      g.add_op(MaxReduce(op.0)).finish()
+    } else if src.check_node_type::<SumReduce>(x) {
+      let op = src.get_op::<SumReduce>(x);
+      g.add_op(SumReduce(op.0)).finish()
+    } else if src.check_node_type::<Constant>(x) {
+      let op = src.get_op::<Constant>(x);
+      g.add_op(Constant(op.0.clone(), op.1)).finish()
+    // !!
+    } else if src.check_node_type::<ConstantOp>(x) {
+      let op = src.get_op::<ConstantOp>(x);
+      g.add_op(op.clone()).finish()
+    } else if src.check_node_type::<InputOp>(x) {
+      g.add_op(InputOp {}).finish()
+    } else {
+      panic!(
+        "Unknown node type: {:?}",
+        src.node_weight(x).unwrap().type_name()
+      )
+    };
+    map.insert(x, n);
+    // assert!(x == n)
+  }
+  // copy edges
+  for e in src.edge_references() {
+    // g.add_edge(e.source(), e.target(), e.weight().clone());
+    g.add_edge(map[&e.source()], map[&e.target()], e.weight().clone());
+  }
+  // copy retrieval marks
+  // src.to_retrieve.iter().for_each(|(id, sh)| {g.to_retrieve.insert(map[id], *sh);});
+  src.to_retrieve.iter().for_each(|(id, sh)| {
+    g.to_retrieve.insert(map[id], *sh);
+  });
+
+  (g, map)
 }
 
 #[cfg(test)]
@@ -504,13 +546,11 @@ mod tests {
   };
   use tracing::info;
 
-  use crate::{
-    scalar::{pretty_print_g, save_graphviz},
-    utils,
-  };
+  use crate::{scalar::save_graphviz, utils};
 
   use super::ScalarCompiler;
 
+  #[ignore = "debugging purpose test"]
   #[test]
   fn test_run() -> Result<(), Box<dyn Error>> {
     utils::init_logging()?;
@@ -538,6 +578,7 @@ mod tests {
     Ok(())
   }
 
+  #[ignore = "debugging purpose test"]
   #[test]
   fn test_run_2() -> Result<(), Box<dyn Error>> {
     utils::init_logging()?;
@@ -566,65 +607,6 @@ mod tests {
     // https://dreampuf.github.io/GraphvizOnline/#digraph%20%7B%0A%20%20%20%200%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%201%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%203%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%204%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%205%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%206%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%207%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%208%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%209%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2010%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2011%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2012%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2013%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2014%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2015%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2016%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2017%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2018%20%5B%20label%20%3D%20%22Add%22%20%5D%0A%20%20%20%2012%20-%3E%2011%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%0A%2C%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%203%20-%3E%204%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2011%20-%3E%2010%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%0A%2C%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2011%20-%3E%209%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2016%20-%3E%208%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2015%20-%3E%207%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2014%20-%3E%206%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%201%20-%3E%205%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2011%20-%3E%208%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%204%20-%3E%207%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%204%20-%3E%206%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%204%20-%3E%205%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%200%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2013%20-%3E%2011%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%0A%2C%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%200%20-%3E%204%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%20%0Amask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2018%20-%3E%2010%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%0A%2C%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%20%20%20%2017%20-%3E%209%20%5B%20label%20%3D%20%22Data%20%7B%20input_order%3A%201%2C%20output_order%3A%200%2C%20shape%3A%20ShapeTracker%20%7B%20dims%3A%20%5B%5D%2C%20indexes%3A%20%5B%5D%2C%20fake%3A%20%5B%5D%2C%0A%20mask%3A%20%5B%5D%2C%20padding%3A%20%5B%5D%20%7D%20%7D%22%20%5D%0A%7D%0A
 
     Ok(())
-  }
-}
-
-#[cfg(test)]
-mod tests_other {
-  use rand::{rngs::StdRng, SeedableRng};
-
-  use luminal::prelude::*;
-
-  use crate::scalar::ScalarCompiler;
-  luminal::test_imports!();
-
-  #[test]
-  fn test_matmul() {
-    let mut cx = Graph::new();
-    let a = cx.tensor::<(Dyn<'M'>, Dyn<'K'>)>();
-    let b = cx.tensor::<(Dyn<'K'>, Dyn<'N'>)>();
-    let mut c = a.matmul(b).retrieve();
-
-    cx.compile(ScalarCompiler::default(), &mut c);
-
-    let d_dev = dfdx::prelude::Cpu::default();
-    for m in (1..23).step_by(4) {
-      for k in (1..35).step_by(3) {
-        for n in (1..70).step_by(7) {
-          let mut rng = StdRng::seed_from_u64(0);
-          let a_data = random_vec_rng(m * k, &mut rng);
-          let b_data = random_vec_rng(k * n, &mut rng);
-          a.set_dyn(a_data.clone(), &[m, k]);
-          b.set_dyn(b_data.clone(), &[k, n]);
-
-          cx.execute();
-
-          let d_a = d_dev.tensor_from_vec(a_data, (m, k));
-          let d_b = d_dev.tensor_from_vec(b_data, (k, n));
-          let d_c = d_a.matmul(d_b);
-
-          assert_close_precision(&c.data(), &d_c.to_dtype::<f32>().as_vec(), 1e-2);
-          c.drop();
-        }
-      }
-    }
-  }
-
-  #[test]
-  fn test_cpu_matmul_2d_2() {
-    let mut cx = Graph::new();
-    let a = cx.tensor::<R2<2, 3>>();
-    a.set(vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0]);
-    let b = cx.tensor::<R2<3, 4>>();
-    b.set(vec![1., 2., 3., 1., 2., 3., 1., 2., 3., 1., 2., 3.]);
-    let mut c = a.matmul(b).retrieve();
-
-    cx.execute();
-
-    let unoptimized_c = c.data();
-    cx.compile(ScalarCompiler::default(), &mut c);
-    cx.execute();
-    assert_close(&c.data(), &unoptimized_c);
   }
 }
 
