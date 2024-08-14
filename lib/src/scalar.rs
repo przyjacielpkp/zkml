@@ -12,7 +12,7 @@ use std::{collections::HashMap, error::Error, fs::File, io::Write};
 use itertools::Itertools;
 use petgraph::{
   graph::EdgeIndex,
-  visit::{EdgeRef, IntoEdgeReferences, IntoNodeIdentifiers, NodeRef},
+  visit::{EdgeRef, IntoEdgeReferences, IntoNodeIdentifiers},
   Direction::{Incoming, Outgoing},
 };
 use tracing::{debug, instrument, warn};

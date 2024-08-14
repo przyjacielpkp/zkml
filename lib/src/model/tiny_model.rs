@@ -12,11 +12,11 @@ use crate::{
   scalar::copy_graph_roughly,
 };
 
-use super::{TrainParams, TrainedGraph};
+use super::{TrainedGraph, TrainingParams};
 
 pub type Model = Linear<9, 1>;
 
-pub fn run_model(train_params: TrainParams) -> TrainedGraph {
+pub fn run_model(train_params: TrainingParams) -> TrainedGraph {
   let dataset: (InputsVec, OutputsVec) = train_params.data;
   let epochs = train_params.epochs;
   // Setup gradient graph

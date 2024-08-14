@@ -20,9 +20,12 @@ pub type OutputsVec = Vec<f32>;
 
 pub type Model = (Linear<9, 16>, ReLU, Linear<16, 16>, ReLU, Linear<16, 1>);
 
-pub fn read_dataset(path: &Path) -> Result<(InputsVec, OutputsVec), std::io::Error> {
-  let content: String = fs::read_to_string(path)?;
-  Ok(parse_dataset(content))
+pub fn read_dataset(path: &Path) -> (InputsVec, OutputsVec) {
+  let content: String = match fs::read_to_string(path) {
+    Ok(content) => content,
+    Err(e) => panic!("Failed to read file {:?}: {}", path, e),
+  };
+  parse_dataset(content)
 }
 
 pub fn parse_dataset(content: String) -> (InputsVec, OutputsVec) {
@@ -102,11 +105,9 @@ pub fn get_weights(graph: &Graph, model: &Model) -> HashMap<NodeIndex, Vec<f32>>
     .collect()
 }
 
-pub struct TrainParams {
+pub struct TrainingParams {
   pub data: (InputsVec, OutputsVec),
   pub epochs: usize,
-  // pub lr: f32,
-  // pub batch_size: u32,
   // pub model: Model,
 }
 
@@ -143,9 +144,10 @@ pub struct TrainedGraph {
   /// the original ml computation graph, without gradients + input id + trained weights
   pub graph: GraphForSnark,
   // below are needed to evaluate the model to compare result against a snark derived from GraphForSnark:
-  pub cx: Graph, /// full trained graph for evaluation, the above "graph" is similar but without gradients
+  pub cx: Graph,
+  /// full trained graph for evaluation, the above "graph" is similar but without gradients
   pub cx_weights: Vec<(NodeIndex, Vec<f32>)>, // needed for evaluation, mostly tests. redundant a bit
-  pub cx_input_id: NodeIndex, // needed for evaluation, mostly tests
+  pub cx_input_id: NodeIndex,  // needed for evaluation, mostly tests
   pub cx_target_id: NodeIndex, // needed for evaluation, mostly tests
   pub cx_output_id: NodeIndex,
 }
@@ -173,7 +175,7 @@ impl TrainedGraph {
   }
 }
 
-pub fn run_model(train_params: TrainParams) -> TrainedGraph {
+pub fn run_model(train_params: TrainingParams) -> TrainedGraph {
   let dataset: (InputsVec, OutputsVec) = train_params.data;
   let EPOCHS = train_params.epochs;
   // Setup gradient graph

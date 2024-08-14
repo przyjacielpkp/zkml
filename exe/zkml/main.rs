@@ -1,11 +1,7 @@
 use lib::*;
 
 use clap::{Parser, Subcommand};
-use model::{read_dataset, TrainParams};
-use std::{
-  error::Error,
-  path::{Path, PathBuf},
-};
+use std::{error::Error, path::PathBuf};
 
 #[derive(Parser)]
 struct Cli {
@@ -17,25 +13,51 @@ struct Cli {
 enum Command {
   /// ZKML prover
   Client {
-    /// File with input to be classified
-    #[arg(long, value_name = "PATH")]
-    input_file: PathBuf,
     /// URL of verifier
     #[arg(long)]
     url: String,
     #[arg(short, long, default_value_t = 4545)]
     port: u16,
+    /// File with input to be classified
+    #[arg(long)]
+    input: PathBuf,
+    /// File with proving key
+    #[arg(long)]
+    pk: PathBuf,
+    /// File with input to be classified
+    #[arg(long)]
+    model: PathBuf,
   },
   /// ZKML verifier
   Server {
     #[arg(short, long, default_value_t = 4545)]
     port: u16,
+    // File with verifying key
+    #[arg(long)]
+    vk: PathBuf,
+    /// File with weights
+    #[arg(long)]
+    weights: PathBuf,
   },
+  /// Train ML model
   Model {
-    #[arg(short, long, value_name = "PATH")]
-    data: PathBuf,
-    #[arg(short, long, value_name = "INT", default_value_t = 20)]
+    #[arg(short, long, default_value_t = 20)]
     epochs: usize,
+    /// File with dataset
+    #[arg(long)]
+    dataset: PathBuf,
+    /// Output file for proving key
+    #[arg(long)]
+    pk: PathBuf,
+    /// Output file for verifying key
+    #[arg(long)]
+    vk: PathBuf,
+    /// Output file for weights
+    #[arg(long)]
+    weights: PathBuf,
+    /// Output file for public inputs
+    #[arg(long)]
+    public_inputs: PathBuf,
   },
 }
 
@@ -46,21 +68,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
   match args.command {
     Command::Client {
-      input_file,
       url,
       port,
+      input,
+      pk,
+      model,
     } => {
       let true_url = format!("https://{}:{}/", url, port);
-      let app = subcommands::Client::new(input_file, true_url);
+      let app = subcommands::Client::new(&input, &pk, &model, true_url);
       app.run().await;
     }
-    Command::Server { port } => {
-      let app = subcommands::Server::new(port);
+    Command::Server { port, vk, weights } => {
+      let app = subcommands::Server::new(port, &vk, &weights);
       app.run().await;
     }
-    Command::Model { data, epochs } => {
-      let ds = read_dataset(Path::new(&data)).unwrap();
-      lib::model::run_model(TrainParams { data: ds, epochs });
+    Command::Model {
+      dataset,
+      vk,
+      pk,
+      weights,
+      public_inputs,
+      epochs,
+    } => {
+      let app = subcommands::Setup::new(&dataset, &pk, &vk, &weights, &public_inputs, epochs);
+      app.run();
     }
   }
   Ok(())

@@ -1,12 +1,19 @@
+use luminal::module::InitModule;
+use std::path::Path;
 
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[cfg(not(debug_assertions))]
 use human_panic::setup_panic;
 
 #[cfg(debug_assertions)]
 extern crate better_panic;
 
+use luminal::{graph::Graph, prelude::NodeIndex};
+use serde::{de::DeserializeOwned, Serialize};
 use tracing::subscriber::{DefaultGuard, SetGlobalDefaultError};
 use tracing_subscriber::{self};
+
+use crate::Model;
 
 // [NOTE] tracing
 //
@@ -81,4 +88,83 @@ pub fn init_logging_tests() -> DefaultGuard {
   let subscriber = tracing_subscriber::fmt().compact();
   let subscriber = subscriber.finish();
   tracing::subscriber::set_default(subscriber)
+}
+
+pub fn unpack_node_index(idx: &NodeIndex) -> u32 {
+  // this is bad but unfortunatelly necessary
+  let str = format!("{:?}", idx);
+
+  if &str[0..10] == "NodeIndex(" && &str[str.len() - 1..] == ")" {
+    let substr = &str[10..str.len() - 1];
+    substr.parse::<u32>().expect("Failed to unpack node index")
+  } else {
+    panic!("Failed to unpack node index")
+  }
+}
+
+pub fn canonical_serialize_to_file<T: CanonicalSerialize>(path: &Path, obj: &T) {
+  let mut buff = Vec::<u8>::new();
+  obj
+    .serialize(&mut buff)
+    .expect("Object serialization failed");
+
+  if let Err(e) = std::fs::write(path, buff) {
+    panic!(
+      "Error while writing to file {}: {}",
+      path.to_str().unwrap(),
+      e
+    );
+  };
+}
+
+pub fn serialize_to_file<T: Serialize>(path: &Path, obj: &T) {
+  let buff = serde_json::to_string(obj).unwrap();
+
+  if let Err(e) = std::fs::write(path, buff) {
+    panic!(
+      "Error while writing to file {}: {}",
+      path.to_str().unwrap(),
+      e
+    );
+  };
+}
+
+pub fn canonical_deserialize_from_file<T: CanonicalDeserialize>(path: &Path) -> T {
+  match std::fs::read(path) {
+    Ok(buff) => T::deserialize(buff.as_slice()).expect("Object deserialization failed"),
+    Err(e) => panic!("Failed to read file {}: {}", path.to_str().unwrap(), e),
+  }
+}
+
+pub fn deserialize_from_file<T: DeserializeOwned>(path: &Path) -> T {
+  match std::fs::read(path) {
+    Ok(buff) => serde_json::from_slice(&buff).expect("Object deserialization failed"),
+    Err(e) => panic!("Failed to read file {}: {}", path.to_str().unwrap(), e),
+  }
+}
+
+pub fn serialize_model_to_file<T: Serialize>(path: &Path, obj: &T) {
+  let buff = serde_json::to_string(obj).unwrap();
+
+  if let Err(e) = std::fs::write(path, buff) {
+    panic!(
+      "Error while writing to file {}: {}",
+      path.to_str().unwrap(),
+      e
+    );
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use luminal::prelude::NodeIndex;
+
+  use crate::utils::unpack_node_index;
+
+  #[test]
+  pub fn should_unpack_node_index() {
+    let idx = NodeIndex::from(43u32);
+
+    assert_eq!(43, unpack_node_index(&idx));
+  }
 }

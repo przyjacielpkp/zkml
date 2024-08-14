@@ -1,22 +1,14 @@
-use std::{
-  collections::HashMap,
-  fs::File,
-  path::{Path, PathBuf},
-};
-
-use ark_groth16::Groth16;
 use ark_serialize::CanonicalSerialize;
-use ark_snark::SNARK;
-use luminal::compiler_utils::ToId;
-use rand::{rngs::StdRng, SeedableRng};
 
-use crate::{model::TrainParams, snark::Curve};
+use crate::model::TrainingParams;
+use std::path::{Path, PathBuf};
 
 pub struct Setup {
-  dataset_path: PathBuf,
   prover_output_path: PathBuf,
   verifier_output_path: PathBuf,
   weights_output_path: PathBuf,
+  public_inputs_output_path: PathBuf,
+  training_params: TrainingParams,
 }
 
 impl Setup {
@@ -25,43 +17,47 @@ impl Setup {
     prover_output_path: &Path,
     verifier_output_path: &Path,
     weights_output_path: &Path,
-    epichs: usize,
+    public_inputs_output_path: &Path,
+    epochs: usize,
   ) -> Self {
     Self {
-      dataset_path: PathBuf::from(dataset_path),
+      training_params: TrainingParams {
+        data: crate::model::read_dataset(dataset_path),
+        epochs,
+      },
       prover_output_path: PathBuf::from(prover_output_path),
       verifier_output_path: PathBuf::from(verifier_output_path),
       weights_output_path: PathBuf::from(weights_output_path),
+      public_inputs_output_path: PathBuf::from(public_inputs_output_path),
     }
   }
 
   pub fn run(self) {
-    let rng = StdRng::seed_from_u64(1);
+    let trained_model = crate::model::run_model(self.training_params);
 
-    let dataset = crate::model::read_dataset(self.dataset_path.as_path()).unwrap();
-    let graph = crate::model::run_model(TrainParams {
-      data: dataset,
-      epochs: 20,
-    });
-    // todo: implement serialization for TrainedGraph, then recreate test_trained_into_snark.
+    let mut snark = crate::compile(&trained_model.graph);
+    let (pk, vk) = snark.make_keys().unwrap();
 
-    // let weights = crate::model::get_weights(&graph, &model);
+    let weights: Vec<(u32, Vec<f32>)> = trained_model
+      .graph
+      .weights
+      .iter()
+      .map(|(key, val)| (crate::utils::unpack_node_index(key), val.clone()))
+      .collect();
 
-    // we need to construct input to compile function
-    // let circuit = crate::lib::compile(...);
+    let public_inputs: Vec<_> = snark
+      .recorded_public_inputs
+      .iter()
+      .map(|val| {
+        let mut buff: Vec<u8> = vec![];
+        val.serialize(&mut buff).unwrap();
+        buff
+      })
+      .collect();
 
-    // let (pk, vk) = Groth16::<Curve>::circuit_specific_setup(circuit, &mut rng).unwrap();
-
-    // let mut pk_file =
-    //   File::create(self.prover_output_path).expect("Failed to create prover setup file");
-    // pk.serialize_uncompressed(pk_file);
-
-    // let mut vk_file =
-    //   File::create(self.verifier_output_path).expect("Failed to create verifier setup file");
-    // vk.serialize_uncompressed(vk_file);
-
-    // let mut weights_file =
-    //   File::create(self.weights_output_path).expect("Failed to create weights file");
-    // vk.serialize_uncompressed(weights_file);
+    crate::utils::canonical_serialize_to_file(&self.prover_output_path, &pk);
+    crate::utils::canonical_serialize_to_file(&self.verifier_output_path, &vk);
+    crate::utils::serialize_to_file(&self.weights_output_path, &weights);
+    crate::utils::serialize_to_file(&self.public_inputs_output_path, &public_inputs);
   }
 }

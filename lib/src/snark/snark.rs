@@ -436,9 +436,9 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
             })?;
             let tmp2 = cs.new_witness_variable(|| {
               zip_with(ll_val.clone(), rr_val.clone(), |l, r| {
-                  f_from_bigint_unsafe((l + r) * scale.z)
-                })
-                .ok_or(SynthesisError::AssignmentMissing)
+                f_from_bigint_unsafe((l + r) * scale.z)
+              })
+              .ok_or(SynthesisError::AssignmentMissing)
             })?;
             let div_res = zip_with(ll_val.clone(), rr_val.clone(), |l, r| mul_mul(l, r, &scale));
             let rem = cs.new_witness_variable(|| {
@@ -590,7 +590,7 @@ impl ConstraintSynthesizer<CircuitField> for &mut MLSnark<CircuitField> {
   }
 }
 
-fn zip_with<A, B, C>(a: Option<A>, b : Option<B>, f : impl Fn(A, B) -> C) -> Option<C> {
+fn zip_with<A, B, C>(a: Option<A>, b: Option<B>, f: impl Fn(A, B) -> C) -> Option<C> {
   a.and_then(|a| b.map(|b| f(a, b)))
 }
 
