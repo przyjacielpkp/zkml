@@ -13,6 +13,8 @@ use tracing::info;
 
 use crate::scalar::copy_graph_roughly;
 
+use super::TrainingParams;
+
 // const FILE_PATH: &str = "data/rp.data";
 
 pub type InputsVec = Vec<[f32; 9]>;
@@ -103,12 +105,6 @@ pub fn get_weights(graph: &Graph, model: &Model) -> HashMap<NodeIndex, Vec<f32>>
       )
     })
     .collect()
-}
-
-pub struct TrainingParams {
-  pub data: (InputsVec, OutputsVec),
-  pub epochs: usize,
-  // pub model: Model,
 }
 
 /// Contains everything needed to define the snark: the ml graph but without the gradients, trained weights and indexes.
