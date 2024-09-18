@@ -1,21 +1,13 @@
-use std::iter::zip;
-
 use luminal::prelude::*;
 use luminal_nn::{Linear, ReLU};
 use luminal_training::{mse_loss, sgd_on_graph, Autograd};
+use std::iter::zip;
 
 use super::{GraphForSnark, InputsVec, OutputsVec};
 use crate::scalar::copy_graph_roughly;
 
 use super::{TrainedGraph, TrainingParams};
 
-/*
-* Other tested models (not sufficiently efficient in practice):
-*
-* pub type Model = Linear<9, 1>;
-* pub type Model = (Linear<9, 2>, ReLU, Linear<2, 1>);
-* pub type Model = (Linear<9, 16>, ReLU, Linear<16, 16>, ReLU, Linear<16, 1>);
-*/
 pub type Model = (Linear<9, 2>, ReLU, Linear<2, 1>);
 
 pub fn run_model(training_params: TrainingParams) -> TrainedGraph {
@@ -58,7 +50,6 @@ pub fn run_model(training_params: TrainingParams) -> TrainedGraph {
       transfer_data_same_graph(&new_weights, &weights, &mut cx);
       loss_avg.update(loss.data()[0]);
       loss.drop();
-      // println!("{:}, {:}", output.data()[0], answer[0]);
       acc_avg.update(
         output
           .data()

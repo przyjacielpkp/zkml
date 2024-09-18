@@ -29,7 +29,7 @@ impl Setup {
   }
 
   pub fn run(self) {
-    let trained_model = crate::model::training::run_model(self.training_params);
+    let trained_model = crate::model::tiny_model::run_model(self.training_params);
 
     let mut snark = crate::compile(&trained_model.graph);
     let (pk, vk) = snark.make_keys().unwrap();

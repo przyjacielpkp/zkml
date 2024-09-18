@@ -55,6 +55,7 @@ pub fn compile(c: &GraphForSnark) -> MLSnark<CircuitField> {
 }
 
 #[cfg(test)]
+#[allow(clippy::excessive_precision)]
 mod tests {
 
   use crate::{
@@ -117,27 +118,6 @@ mod tests {
     Ok(())
   }
 
-  #[test]
-  pub fn test_trained_into_snark_0() -> Result<(), String> {
-    /* model originally contained in submodule tiny_model */
-    tracing::info!("linear layer, data A");
-    let data = parse_dataset(include_str!("../../data/rp.data").to_string());
-    let trained_model = crate::model::training::run_model(TrainingParams { data, epochs: 2 });
-    let input = (0..9).map(|x| f32::from(x as i16)).collect_vec();
-    test_trained_into_snark(trained_model, input)
-  }
-
-  #[test]
-  pub fn test_trained_into_snark_1() -> Result<(), String> {
-    tracing::info!("linear layer, data B");
-    let data = parse_dataset(include_str!("../../data/rp.data").to_string());
-    let trained_model = crate::model::training::run_model(TrainingParams { data, epochs: 2 });
-    let input = (9..18).map(|x| f32::from(x as i16)).collect_vec();
-    test_trained_into_snark(trained_model, input)
-  }
-
-  /*
-  Test for unused models:
   #[test]
   pub fn test_trained_into_snark_0() -> Result<(), String> {
     // See the model shape at https://dreampuf.github.io/GraphvizOnline/#digraph%20%7B%0A%20%20%20%200%20%5B%20label%20%3D%20%22Weight%20Load%20%7C%200%22%20%5D%0A%20%20%20%201%20%5B%20label%20%3D%20%22Tensor%20Load%20%7C%201%22%20%5D%0A%20%20%20%202%20%5B%20label%20%3D%20%22Mul%20%7C%202%22%20%5D%0A%20%20%20%203%20%5B%20label%20%3D%20%22SumReduce(2)%20%7C%203%22%20%5D%0A%20%20%20%200%20-%3E%202%20%5B%20%20%5D%0A%20%20%20%201%20-%3E%202%20%5B%20%20%5D%0A%20%20%20%202%20-%3E%203%20%5B%20%20%5D%0A%7D%0A
@@ -235,5 +215,5 @@ mod tests {
     let trained_model = crate::model::fixed_weights::run_model();
     let input: Vec<f32> = [1.0, 2.0, 3.0].to_vec();
     test_trained_into_snark(trained_model, input)
-  }*/
+  }
 }

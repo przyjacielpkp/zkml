@@ -1,11 +1,13 @@
 pub mod fixed_weights;
-pub mod training;
+pub mod lessthan_model;
+pub mod medium_model;
+pub mod tiny_model;
 pub mod types;
 pub mod utils;
 
 use luminal::prelude::NodeIndex;
 
-pub use training::*;
+pub use tiny_model::*;
 pub use types::*;
 pub use utils::*;
 
