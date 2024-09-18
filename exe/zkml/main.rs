@@ -35,9 +35,6 @@ enum Command {
     // File with verifying key
     #[arg(long)]
     vk: PathBuf,
-    /// File with weights
-    #[arg(long)]
-    weights: PathBuf,
   },
   /// Train ML model
   Model {
@@ -55,9 +52,6 @@ enum Command {
     /// Output file for weights
     #[arg(long)]
     weights: PathBuf,
-    /// Output file for public inputs
-    #[arg(long)]
-    public_inputs: PathBuf,
   },
 }
 
@@ -74,12 +68,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
       pk,
       model,
     } => {
-      let true_url = format!("https://{}:{}/", url, port);
+      let true_url = format!("http://{}:{}/", url, port);
       let app = subcommands::Client::new(&input, &pk, &model, true_url);
       app.run().await;
     }
-    Command::Server { port, vk, weights } => {
-      let app = subcommands::Server::new(port, &vk, &weights);
+    Command::Server { port, vk } => {
+      let app = subcommands::Server::new(port, &vk);
       app.run().await;
     }
     Command::Model {
@@ -87,10 +81,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
       vk,
       pk,
       weights,
-      public_inputs,
       epochs,
     } => {
-      let app = subcommands::Setup::new(&dataset, &pk, &vk, &weights, &public_inputs, epochs);
+      let app = subcommands::Setup::new(&dataset, &pk, &vk, &weights, epochs);
       app.run();
     }
   }

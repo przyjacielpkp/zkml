@@ -80,7 +80,7 @@ pub fn run_model(train_params: TrainingParams) -> TrainedGraph {
   println!(
     "Took {:.2}s, {:.2}µs / iter",
     start.elapsed().as_secs_f32(),
-    start.elapsed().as_micros() / iter
+    start.elapsed().as_micros() as f32 / (iter as f32 + 000.1)
   );
   // cx.display();
   let cx_weights_vec: Vec<(NodeIndex, Vec<f32>)> = weights
@@ -90,9 +90,8 @@ pub fn run_model(train_params: TrainingParams) -> TrainedGraph {
         a,
         cx.tensors
           .get(&(a, 0 /* assuming single output */))
-          .unwrap()
-          .downcast_ref::<Vec<f32>>()
-          .unwrap()
+          .map(|val| val.downcast_ref::<Vec<f32>>().unwrap())
+          .unwrap_or(&Vec::new())
           .clone()
           .into_iter()
           .collect(),

@@ -108,13 +108,7 @@ pub fn canonical_serialize_to_file<T: CanonicalSerialize>(path: &Path, obj: &T) 
     .serialize(&mut buff)
     .expect("Object serialization failed");
 
-  if let Err(e) = std::fs::write(path, buff) {
-    panic!(
-      "Error while writing to file {}: {}",
-      path.to_str().unwrap(),
-      e
-    );
-  };
+  serialize_to_file(path, &buff);
 }
 
 pub fn serialize_to_file<T: Serialize>(path: &Path, obj: &T) {
@@ -130,10 +124,8 @@ pub fn serialize_to_file<T: Serialize>(path: &Path, obj: &T) {
 }
 
 pub fn canonical_deserialize_from_file<T: CanonicalDeserialize>(path: &Path) -> T {
-  match std::fs::read(path) {
-    Ok(buff) => T::deserialize(buff.as_slice()).expect("Object deserialization failed"),
-    Err(e) => panic!("Failed to read file {}: {}", path.to_str().unwrap(), e),
-  }
+  let buff: Vec<u8> = deserialize_from_file(path);
+  T::deserialize(buff.as_slice()).expect("Object deserialization failed")
 }
 
 pub fn deserialize_from_file<T: DeserializeOwned>(path: &Path) -> T {

@@ -57,13 +57,16 @@ pub fn split_dataset(
   ratio: f32,
 ) -> (InputsVec, InputsVec, OutputsVec, OutputsVec) {
   let len = x.len();
-  let len_short = (len as f32 * ratio) as usize;
-  let x_train = x[0..len_short].to_vec();
-  let x_test = x[len_short..len - 1].to_vec();
-  let y_train = y[0..len_short].to_vec();
-  let y_test = y[len_short..len - 1].to_vec();
+  let splitting_point = (len as f32 * ratio) as usize;
+  let (x_train, x_test) = x.split_at(splitting_point);
+  let (y_train, y_test) = y.split_at(splitting_point);
 
-  (x_train, x_test, y_train, y_test)
+  (
+    x_train.to_vec(),
+    x_test.to_vec(),
+    y_train.to_vec(),
+    y_test.to_vec(),
+  )
 }
 
 pub fn normalize_data(x: InputsVec) -> InputsVec {

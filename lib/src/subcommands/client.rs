@@ -42,11 +42,10 @@ impl Client {
     snark.set_input(self.input);
     let proof: Proof<Pairing> = snark.make_proof(&self.pk).expect("Cannot read proving key");
 
-    let mut serialized_proof = Vec::<u8>::new();
-    proof.serialize(&mut serialized_proof).unwrap();
-    let response = match client.get(self.url).body(serialized_proof).send().await {
+    let body = super::packet::pack(proof, snark.recorded_public_inputs);
+    let response = match client.get(self.url).body(body).send().await {
       Ok(response) => response,
-      Err(err) => panic!("{}", err),
+      Err(err) => panic!("{:?}", err.is_connect()),
     };
     let res = response.text().await.unwrap();
     println!("{}", res);
