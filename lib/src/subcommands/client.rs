@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use ark_groth16::{Proof, ProvingKey};
-use ark_serialize::CanonicalSerialize;
 
 use crate::{
   model::GraphForSnark,

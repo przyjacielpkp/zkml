@@ -6,12 +6,6 @@ pub struct SerializationError {}
 
 use crate::snark::{Fp, Pairing};
 
-#[derive(Deserialize, Serialize)]
-pub(crate) struct Packet {
-  serialized_proof: Vec<u8>,
-  serialized_public_inputs: Vec<Vec<u8>>,
-}
-
 pub fn pack(proof: Proof<Pairing>, public_inputs: Vec<Fp>) -> String {
   let mut packet = Packet {
     serialized_proof: vec![],
@@ -41,4 +35,10 @@ pub fn unpack(input: &str) -> Result<(Proof<Pairing>, Vec<Fp>), SerializationErr
     .map(|bytes| Fp::deserialize(bytes.as_slice()).map_err(|_| SerializationError {}))
     .collect::<Result<Vec<Fp>, SerializationError>>()?;
   Ok((proof, public_inputs))
+}
+
+#[derive(Deserialize, Serialize)]
+struct Packet {
+  serialized_proof: Vec<u8>,
+  serialized_public_inputs: Vec<Vec<u8>>,
 }

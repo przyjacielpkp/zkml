@@ -1,12 +1,8 @@
-
 use luminal::prelude::*;
 use luminal_nn::{Linear, ReLU};
 use petgraph::Direction::Outgoing;
 
-use crate::{
-  model::GraphForSnark,
-  scalar::copy_graph_roughly,
-};
+use crate::{model::GraphForSnark, scalar::copy_graph_roughly};
 
 use super::TrainedGraph;
 
@@ -17,10 +13,10 @@ fn get_own_size(x: NodeIndex, gg: &Graph) -> usize {
   let get_own_shape = |x, gg: &Graph| {
     // reasonably we expect one of two cases: there is some outgoing edge OR it is a retrieval node
     if let Some(w) = gg.to_retrieve.get(&x) {
-      w.clone().1
+      w.1
     } else {
       match gg
-        .edges_directed(x.clone(), Outgoing)
+        .edges_directed(x, Outgoing)
         .filter_map(|e| e.weight().as_data())
         .next()
       {
@@ -73,11 +69,10 @@ pub fn run_model() -> TrainedGraph {
       weights: weights_vec,
       input_id,
     },
-    cx: cx,
+    cx,
     cx_weights: cx_weights_vec,
     cx_output_id: output.id,
     cx_input_id: input.id,
     cx_target_id: target.id,
-    // cx_target_id: output.id, // <- whatever
   }
 }

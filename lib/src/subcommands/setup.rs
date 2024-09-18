@@ -1,7 +1,6 @@
-use ark_serialize::CanonicalSerialize;
+use std::path::{Path, PathBuf};
 
 use crate::model::TrainingParams;
-use std::path::{Path, PathBuf};
 
 pub struct Setup {
   prover_output_path: PathBuf,
@@ -30,7 +29,7 @@ impl Setup {
   }
 
   pub fn run(self) {
-    let trained_model = crate::model::tiny_model::run_model(self.training_params);
+    let trained_model = crate::model::training::run_model(self.training_params);
 
     let mut snark = crate::compile(&trained_model.graph);
     let (pk, vk) = snark.make_keys().unwrap();
@@ -40,16 +39,6 @@ impl Setup {
       .weights
       .iter()
       .map(|(key, val)| (crate::utils::unpack_node_index(key), val.clone()))
-      .collect();
-
-    let public_inputs: Vec<_> = snark
-      .recorded_public_inputs
-      .iter()
-      .map(|val| {
-        let mut buff: Vec<u8> = vec![];
-        val.serialize(&mut buff).unwrap();
-        buff
-      })
       .collect();
 
     crate::utils::canonical_serialize_to_file(&self.prover_output_path, &pk);

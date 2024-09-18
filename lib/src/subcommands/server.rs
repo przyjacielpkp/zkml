@@ -34,13 +34,15 @@ impl Server {
   }
 
   async fn handle_request(State(state): State<Arc<ServerState>>, input: String) -> String {
-    println!("Got request: {}", input);
     let result = match super::packet::unpack(&input) {
       Ok((proof, public_input)) => {
-        Groth16::<Pairing>::verify(&state.vk, public_input.as_slice(), &proof).unwrap()
+        Groth16::<Pairing>::verify(&state.vk, public_input.as_slice(), &proof).unwrap_or(false)
       }
       Err(_) => false,
     };
-    serde_json::to_string(&result).unwrap()
+    match result {
+      true => String::from("Proof verification succeeded"),
+      false => String::from("Proof verification failed"),
+    }
   }
 }
