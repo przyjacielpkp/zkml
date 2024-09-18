@@ -1,4 +1,3 @@
-use luminal::module::InitModule;
 use std::path::Path;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -8,12 +7,10 @@ use human_panic::setup_panic;
 #[cfg(debug_assertions)]
 extern crate better_panic;
 
-use luminal::{graph::Graph, prelude::NodeIndex};
+use luminal::prelude::NodeIndex;
 use serde::{de::DeserializeOwned, Serialize};
 use tracing::subscriber::{DefaultGuard, SetGlobalDefaultError};
 use tracing_subscriber::{self};
-
-use crate::Model;
 
 // [NOTE] tracing
 //
@@ -42,7 +39,7 @@ pub fn install_logger() -> Result<(), SetGlobalDefaultError> {
   // let subscriber = subscriber.with_max_level(tracing::Level::DEBUG);
 
   let subscriber = subscriber.finish();
-  return tracing::subscriber::set_global_default(subscriber);
+  tracing::subscriber::set_global_default(subscriber)
 }
 
 pub fn init_logging() -> Result<(), SetGlobalDefaultError> {

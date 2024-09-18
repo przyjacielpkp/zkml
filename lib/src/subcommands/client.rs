@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use ark_groth16::{Proof, ProvingKey};
-use ark_serialize::CanonicalSerialize;
 
 use crate::{
   model::GraphForSnark,
@@ -41,8 +40,9 @@ impl Client {
     let mut snark = crate::compile(&self.trained_model);
     snark.set_input(self.input);
     let proof: Proof<Pairing> = snark.make_proof(&self.pk).expect("Cannot read proving key");
-
-    let body = super::packet::pack(proof, snark.recorded_public_inputs);
+    let mut doctored_public_inputs = snark.recorded_public_inputs;
+    doctored_public_inputs[9] = crate::snark::CircuitField::from(0);
+    let body = super::packet::pack(proof, doctored_public_inputs);
     let response = match client.get(self.url).body(body).send().await {
       Ok(response) => response,
       Err(err) => panic!("{:?}", err.is_connect()),

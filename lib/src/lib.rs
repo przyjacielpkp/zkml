@@ -1,19 +1,14 @@
 use std::{collections::HashMap, vec};
 
-use luminal_nn::{Linear, ReLU};
-use model::{GraphForSnark, TrainedGraph};
+use model::GraphForSnark;
 use scalar::scalar;
 use snark::{scaling_helpers::ScaleT, CircuitField, MLSnark, SourceType};
 
 pub mod model;
-pub mod subcommands;
-
-pub mod notes;
 pub mod scalar;
 pub mod snark;
+pub mod subcommands;
 pub mod utils;
-
-pub type Model = (Linear<9, 16>, ReLU, Linear<16, 16>, ReLU, Linear<16, 1>);
 
 pub const SCALE: ScaleT = ScaleT {
   s: 100_000,
@@ -37,7 +32,7 @@ pub fn compile(c: &GraphForSnark) -> MLSnark<CircuitField> {
       .new_inputs
       .get(&i)
       .unwrap_or_else(|| panic!("Wrong id"));
-    for (little_id, v) in little_ids.into_iter().zip(w_i) {
+    for (little_id, v) in little_ids.iter().zip(w_i) {
       source_map.insert(*little_id, SourceType::Public(v));
     }
   }
@@ -47,7 +42,7 @@ pub fn compile(c: &GraphForSnark) -> MLSnark<CircuitField> {
     .new_inputs
     .get(&input_id)
     .unwrap_or_else(|| panic!("Wrong input id"));
-  for little_id in little_ids.into_iter() {
+  for little_id in little_ids.iter() {
     source_map.insert(*little_id, SourceType::Private(None));
   }
   MLSnark {
@@ -60,6 +55,7 @@ pub fn compile(c: &GraphForSnark) -> MLSnark<CircuitField> {
 }
 
 #[cfg(test)]
+#[allow(clippy::excessive_precision)]
 mod tests {
 
   use crate::{

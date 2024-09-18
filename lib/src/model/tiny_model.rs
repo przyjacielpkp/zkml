@@ -3,29 +3,23 @@ use std::iter::zip;
 use luminal::prelude::*;
 use luminal_nn::Linear;
 use luminal_training::{mse_loss, sgd_on_graph, Autograd};
-use tracing::info;
 
-use crate::{
-  model::{
-    normalize_data, split_dataset, ExponentialAverage, GraphForSnark, InputsVec, OutputsVec,
-  },
-  scalar::copy_graph_roughly,
-};
+use super::{GraphForSnark, InputsVec, OutputsVec};
+use crate::scalar::copy_graph_roughly;
 
 use super::{TrainedGraph, TrainingParams};
 
-pub type Model = Linear<9, 1>;
+pub type Model = (Linear<9, 1>,);
 
-pub fn run_model(train_params: TrainingParams) -> TrainedGraph {
-  let dataset: (InputsVec, OutputsVec) = train_params.data;
-  let epochs = train_params.epochs;
+pub fn run_model(training_params: TrainingParams) -> TrainedGraph {
+  let dataset: (InputsVec, OutputsVec) = training_params.data;
+  let epochs = training_params.epochs;
   // Setup gradient graph
   let mut cx = Graph::new();
   let model = <Model>::initialize(&mut cx);
   let input = cx.tensor::<R1<9>>();
   let output = model.forward(input).retrieve();
 
-  // cx.display();
   // record graph without gradients.
   let (cx_og, remap) = copy_graph_roughly(&cx);
   let input_id = remap[&input.id];
@@ -42,16 +36,15 @@ pub fn run_model(train_params: TrainingParams) -> TrainedGraph {
 
   let (mut loss_avg, mut acc_avg) = (ExponentialAverage::new(1.0), ExponentialAverage::new(0.0));
   let start = std::time::Instant::now();
-  // let EPOCHS = 20;
 
-  let (X, Y) = dataset;
-  let (X_train, _x_test, y_train, _y_test) = split_dataset(X, Y, 0.8);
-  let X_train = normalize_data(X_train);
+  let (x, y) = dataset;
+  let (training_x, _, training_y, _) = super::split_dataset(x, y, 0.8);
+  let training_x = super::normalize_data(training_x);
   let mut iter = 0;
   for _ in 0..epochs {
-    for (x, y) in zip(X_train.iter(), y_train.iter()) {
-      let answer = [y.to_owned()];
-      input.set(x.to_owned());
+    for (x, y) in zip(training_x.iter(), training_y.iter()) {
+      let answer = [*y];
+      input.set(*x);
       target.set(answer);
 
       cx.execute();
@@ -67,22 +60,21 @@ pub fn run_model(train_params: TrainingParams) -> TrainedGraph {
           .filter(|(a, b)| (a - b).abs() < 0.5)
           .count() as f32,
       );
-      info!("{:?}", output.data());
+      tracing::info!("{:?}", output.data());
       output.drop();
-      // println!(
-      //   "Iter {iter} Loss: {:.2} Acc: {:.2}",
-      //   loss_avg.value, acc_avg.value
-      // );
       iter += 1;
     }
   }
-  println!("Finished in {iter} iterations");
-  println!(
-    "Took {:.2}s, {:.2}µs / iter",
-    start.elapsed().as_secs_f32(),
-    start.elapsed().as_micros() as f32 / (iter as f32 + 000.1)
-  );
-  // cx.display();
+
+  if iter > 0 {
+    tracing::info!("Finished in {iter} iterations");
+    tracing::info!(
+      "Took {:.2}s, {:.2}µs / iter",
+      start.elapsed().as_secs_f32(),
+      start.elapsed().as_micros() / iter
+    );
+  }
+
   let cx_weights_vec: Vec<(NodeIndex, Vec<f32>)> = weights
     .into_iter()
     .map(|a| {
@@ -98,21 +90,54 @@ pub fn run_model(train_params: TrainingParams) -> TrainedGraph {
       )
     })
     .collect();
-  let weights_vec = cx_weights_vec
+  let weights = cx_weights_vec
     .iter()
-    .map(|(a, b)| (remap[&a], b.clone()))
+    .map(|(a, b)| (remap[a], b.clone()))
     .collect();
 
   TrainedGraph {
     graph: GraphForSnark {
       graph: cx_og,
-      weights: weights_vec,
+      weights,
       input_id,
     },
-    cx: cx,
+    cx,
     cx_weights: cx_weights_vec,
     cx_output_id: output.id,
     cx_input_id: input.id,
     cx_target_id: target.id,
+  }
+}
+
+pub struct ExponentialAverage {
+  beta: f32,
+  moment: f32,
+  pub value: f32,
+  t: i32,
+}
+
+impl ExponentialAverage {
+  pub fn new(initial: f32) -> Self {
+    ExponentialAverage {
+      beta: 0.999,
+      moment: 0.,
+      value: initial,
+      t: 0,
+    }
+  }
+}
+
+impl ExponentialAverage {
+  pub fn update(&mut self, value: f32) {
+    self.t += 1;
+    self.moment = self.beta * self.moment + (1. - self.beta) * value;
+    // bias correction
+    self.value = self.moment / (1. - f32::powi(self.beta, self.t));
+  }
+
+  pub fn reset(&mut self) {
+    self.moment = 0.;
+    self.value = 0.0;
+    self.t = 0;
   }
 }
